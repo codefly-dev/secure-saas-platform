@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-test/
+dist-policy/
+.pulumi/
+*.tsbuildinfo
+
+# Pulumi stack files can contain account-specific values. Keep examples only.
+Pulumi.*.yaml
+!Pulumi.*.yaml.example
+
+# Local tooling
+.DS_Store
+.env
+.env.*
+!.env.example

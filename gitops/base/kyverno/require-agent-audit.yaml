@@ -1,0 +1,64 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-agent-audit
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-agent-broker-audit-metadata
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - agent-broker
+                - agent-egress
+      validate:
+        message: Agent broker pods must include tenant, principal, and turn metadata.
+        pattern:
+          metadata:
+            labels:
+              security.deus.dev/tenant-id: "?*"
+              security.deus.dev/principal-id: "?*"
+              security.deus.dev/turn-id: "?*"
+            annotations:
+              security.deus.dev/model-provider: "?*"
+              security.deus.dev/prompt-audit-sink: "?*"
+              security.deus.dev/tool-audit-sink: "?*"
+    - name: require-agent-resource-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - agent-broker
+                - agent-egress
+      validate:
+        message: Agent broker containers must declare CPU, memory, and ephemeral-storage limits.
+        foreach:
+          - list: request.object.spec.containers
+            pattern:
+              resources:
+                limits:
+                  cpu: "?*"
+                  memory: "?*"
+                  ephemeral-storage: "?*"
+    - name: deny-broker-direct-model-call
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - agent-broker
+      validate:
+        message: agent-broker pods must not call external model APIs directly. Route via the agent-egress model gateway.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.metadata.annotations.\"security.deus.dev/direct-model-call\" || 'false' }}"
+                operator: NotEquals
+                value: "false"

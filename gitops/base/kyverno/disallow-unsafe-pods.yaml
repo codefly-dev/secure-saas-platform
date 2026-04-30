@@ -1,0 +1,62 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-unsafe-pod-settings
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: disallow-host-network
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - argocd
+                - tailscale
+                - vault-secrets-operator
+                - istio-system
+                - istio-ingress
+                - cert-manager
+                - observability
+                - metrics-server
+      validate:
+        message: Host network, PID, and IPC namespaces are not allowed.
+        pattern:
+          spec:
+            =(hostNetwork): "false"
+            =(hostPID): "false"
+            =(hostIPC): "false"
+    - name: require-runtime-default-seccomp
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - argocd
+                - tailscale
+                - vault-secrets-operator
+                - istio-system
+                - istio-ingress
+                - cert-manager
+                - observability
+                - metrics-server
+      validate:
+        message: Pods must use RuntimeDefault seccomp.
+        pattern:
+          spec:
+            securityContext:
+              seccompProfile:
+                type: RuntimeDefault

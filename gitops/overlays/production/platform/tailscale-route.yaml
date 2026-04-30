@@ -1,0 +1,9 @@
+apiVersion: tailscale.com/v1alpha1
+kind: Connector
+metadata:
+  name: platform-private-access
+  namespace: tailscale
+spec:
+  subnetRouter:
+    advertiseRoutes:
+      - 10.12.0.0/16

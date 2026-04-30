@@ -1,0 +1,45 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-image-digests
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: images-must-use-digests
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - argocd
+                - tailscale
+                - vault-secrets-operator
+                - istio-system
+                - istio-ingress
+                - cert-manager
+                - observability
+                - metrics-server
+      validate:
+        message: Container images must be pinned by digest.
+        foreach:
+          - list: request.object.spec.containers
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.image }}"
+                    operator: NotContains
+                    value: "@sha256:"
+          - list: request.object.spec.initContainers || `[]`
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.image }}"
+                    operator: NotContains
+                    value: "@sha256:"

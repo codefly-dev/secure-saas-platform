@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - pod-security-restricted.yaml
+  - disallow-unsafe-pods.yaml
+  - require-image-digests.yaml
+  - require-execution-sandbox.yaml
+  - verify-signed-provenance.yaml
+  - require-agent-audit.yaml

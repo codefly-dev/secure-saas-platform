@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - default-deny-platform.yaml
+  - default-deny-workloads.yaml
+  - default-deny-security.yaml
+  - default-deny-execution.yaml
+  - default-deny-agent-broker.yaml
+  - default-deny-agent-egress.yaml
+  - allow-dns-platform.yaml
+  - allow-dns-workloads.yaml
+  - allow-dns-security.yaml
+  - allow-dns-execution.yaml
+  - allow-dns-agent-broker.yaml
+  - allow-dns-agent-egress.yaml
+  - allow-broker-to-egress.yaml

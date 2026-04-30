@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - platform-peer-authentication.yaml
+  - workloads-peer-authentication.yaml
+  - execution-peer-authentication.yaml
+  - workloads-default-deny-authorization.yaml
+  - execution-default-deny-authorization.yaml
+  - mesh-default-telemetry.yaml

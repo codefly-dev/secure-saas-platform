@@ -1,0 +1,78 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-execution-sandbox
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-microvm-runtime-class
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - execution
+      validate:
+        message: Execution pods must use the approved microVM RuntimeClass.
+        pattern:
+          spec:
+            runtimeClassName: deus-microvm
+    - name: deny-service-account-token
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - execution
+      validate:
+        message: Execution pods must explicitly disable service account token automount.
+        pattern:
+          spec:
+            automountServiceAccountToken: false
+    - name: require-execution-resource-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - execution
+      validate:
+        message: Execution containers must declare CPU, memory, and ephemeral-storage limits.
+        foreach:
+          - list: request.object.spec.containers
+            pattern:
+              resources:
+                limits:
+                  cpu: "?*"
+                  memory: "?*"
+                  ephemeral-storage: "?*"
+          - list: request.object.spec.initContainers || `[]`
+            pattern:
+              resources:
+                limits:
+                  cpu: "?*"
+                  memory: "?*"
+                  ephemeral-storage: "?*"
+    - name: require-execution-audit-metadata
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - execution
+      validate:
+        message: Execution pods must include tenant, job, source, egress, and sandbox-provider metadata.
+        pattern:
+          metadata:
+            labels:
+              security.deus.dev/tenant-id: "?*"
+              security.deus.dev/job-id: "?*"
+            annotations:
+              security.deus.dev/source-revision: "?*"
+              security.deus.dev/egress-profile: "?*"
+              security.deus.dev/sandbox-provider: "?*"

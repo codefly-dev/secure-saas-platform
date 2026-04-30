@@ -1,0 +1,36 @@
+{
+  "name": "secure-saas-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Secure SaaS infrastructure baseline with centralized egress, EKS, Vault-ready secrets, and GitOps.",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "policy:build": "tsc -p tsconfig.policy.json",
+    "validate:gitops": "kustomize build gitops/bootstrap/argocd >/dev/null && kustomize build gitops/bootstrap/argocd/overlays/staging >/dev/null && kustomize build gitops/bootstrap/argocd/overlays/production >/dev/null && kustomize build gitops/overlays/dev/platform >/dev/null && kustomize build gitops/overlays/dev/execution >/dev/null && kustomize build gitops/overlays/staging/platform >/dev/null && kustomize build gitops/overlays/staging/execution >/dev/null && kustomize build gitops/overlays/production/platform >/dev/null && kustomize build gitops/overlays/production/execution >/dev/null",
+    "validate": "npm run check && npm run build && npm run policy:build && npm run validate:gitops",
+    "onboard": "node scripts/onboard.mjs",
+    "verify:onboarding": "node scripts/verify-onboarding.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "preflight:strict": "node scripts/preflight.mjs --require-stack-files --strict-placeholders",
+    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/tests/*.test.js",
+    "test": "npm run validate && npm run test:unit",
+    "preview": "pulumi preview",
+    "up": "pulumi up",
+    "format": "prettier --write \"**/*.{ts,md,yaml,yml,json}\""
+  },
+  "dependencies": {
+    "@pulumi/aws": "^7.0.0",
+    "@pulumi/github": "^6.13.1",
+    "@pulumi/pulumi": "^3.229.0"
+  },
+  "devDependencies": {
+    "@pulumi/policy": "^1.20.0",
+    "@types/node": "^24.0.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

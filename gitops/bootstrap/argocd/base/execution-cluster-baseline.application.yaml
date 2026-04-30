@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: execution-cluster-baseline
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: execution
+  source:
+    repoURL: https://github.com/your-org/secure-saas-infra.git
+    targetRevision: main
+    path: gitops/overlays/dev/execution
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

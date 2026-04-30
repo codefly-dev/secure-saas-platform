@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - platform.yaml
+  - workloads.yaml
+  - security.yaml
+  - execution.yaml
+  - tailscale.yaml
+  - istio-system.yaml
+  - istio-ingress.yaml
+  - cert-manager.yaml
+  - observability.yaml
+  - metrics-server.yaml
+  - agent-broker.yaml
+  - agent-egress.yaml
+  - falco.yaml
+  - vault.yaml

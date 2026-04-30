@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - apps/cert-manager.application.yaml
+  - apps/gateway-api-crds.application.yaml
+  - apps/istio-base.application.yaml
+  - apps/istiod.application.yaml
+  - apps/istio-cni.application.yaml
+  - apps/istio-ztunnel.application.yaml
+  - apps/istio-ingress-gateway.application.yaml
+  - apps/kyverno.application.yaml
+  - apps/metrics-server.application.yaml
+  - apps/kube-prometheus-stack.application.yaml
+  - apps/vault-secrets-operator.application.yaml
+  - apps/vault.application.yaml
+  - apps/falco.application.yaml
+  - apps/tailscale-operator.application.yaml
+  - platform-cluster-baseline.application.yaml
+  - execution-cluster-baseline.application.yaml

@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: execution-container-limits
+  namespace: execution
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+      max:
+        cpu: "4"
+        memory: 8Gi
+        ephemeral-storage: 20Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: execution-namespace-quota
+  namespace: execution
+spec:
+  hard:
+    pods: "100"
+    requests.cpu: "100"
+    requests.memory: 200Gi
+    requests.ephemeral-storage: 1Ti
+    limits.cpu: "200"
+    limits.memory: 400Gi
+    limits.ephemeral-storage: 2Ti

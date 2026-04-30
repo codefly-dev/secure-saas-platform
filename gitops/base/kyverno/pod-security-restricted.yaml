@@ -1,0 +1,32 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: enforce-pod-security-restricted
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: restricted
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - argocd
+                - tailscale
+                - vault-secrets-operator
+                - istio-system
+                - istio-ingress
+                - cert-manager
+                - observability
+                - metrics-server
+      validate:
+        podSecurity:
+          level: restricted
+          version: latest

@@ -1,0 +1,79 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falco
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: falco
+  source:
+    repoURL: https://falcosecurity.github.io/charts
+    chart: falco
+    targetRevision: 4.20.0
+    helm:
+      releaseName: falco
+      values: |
+        driver:
+          kind: modern_ebpf
+        falcoctl:
+          artifact:
+            install:
+              enabled: true
+            follow:
+              enabled: true
+          config:
+            artifact:
+              install:
+                refs:
+                  - falco-rules:3
+                  - k8saudit-rules:0.7
+                  - falco-incubating-rules:3
+              followRefs:
+                - falco-rules:3
+                - k8saudit-rules:0.7
+        falco:
+          json_output: true
+          log_level: info
+          syscall_event_drops:
+            actions:
+              - log
+              - alert
+            rate: 0.03333
+            max_burst: 10
+          load_plugins:
+            - k8saudit
+            - json
+        services:
+          - name: falco-grpc
+            type: ClusterIP
+            ports:
+              - port: 5060
+                targetPort: 5060
+        falcosidekick:
+          enabled: true
+          replicaCount: 2
+          config:
+            cloudwatchlogs:
+              loggroup: /aws/falco/sandbox-events
+              logstream: events
+        controller:
+          kind: daemonset
+          daemonset:
+            updateStrategy:
+              type: RollingUpdate
+        tty: false
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

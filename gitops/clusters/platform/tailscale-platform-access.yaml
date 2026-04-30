@@ -1,0 +1,15 @@
+apiVersion: tailscale.com/v1alpha1
+kind: Connector
+metadata:
+  name: platform-private-access
+  namespace: tailscale
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  replicas: 2
+  hostnamePrefix: platform-private
+  tags:
+    - tag:k8s-platform
+  subnetRouter:
+    advertiseRoutes:
+      - 10.10.0.0/16

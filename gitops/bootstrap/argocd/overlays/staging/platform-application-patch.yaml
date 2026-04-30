@@ -1,0 +1,7 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cluster-baseline
+spec:
+  source:
+    path: gitops/overlays/staging/platform

@@ -1,0 +1,68 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-signed-provenance
+  annotations:
+    policies.kyverno.io/category: Software Supply Chain Security
+    policies.kyverno.io/subject: Pod
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+    timeoutSeconds: 30
+  rules:
+    - name: verify-keyless-signature-provenance-and-sbom
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kyverno
+                - argocd
+                - tailscale
+                - vault-secrets-operator
+                - istio-system
+                - istio-ingress
+                - cert-manager
+                - observability
+                - metrics-server
+      verifyImages:
+        - imageReferences:
+            - "*"
+          failureAction: Enforce
+          required: true
+          verifyDigest: true
+          mutateDigest: false
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    subjectRegExp: https://github\.com/[^/]+/[^/]+/\.github/workflows/.+@refs/(heads/main|tags/v.+)
+                    issuer: https://token.actions.githubusercontent.com
+                    rekor:
+                      url: https://rekor.sigstore.dev
+          attestations:
+            - predicateType: https://slsa.dev/provenance/v1
+              attestors:
+                - count: 1
+                  entries:
+                    - keyless:
+                        subjectRegExp: https://github\.com/[^/]+/[^/]+/\.github/workflows/.+@refs/(heads/main|tags/v.+)
+                        issuer: https://token.actions.githubusercontent.com
+                        rekor:
+                          url: https://rekor.sigstore.dev
+            - predicateType: https://spdx.dev/Document
+              attestors:
+                - count: 1
+                  entries:
+                    - keyless:
+                        subjectRegExp: https://github\.com/[^/]+/[^/]+/\.github/workflows/.+@refs/(heads/main|tags/v.+)
+                        issuer: https://token.actions.githubusercontent.com
+                        rekor:
+                          url: https://rekor.sigstore.dev

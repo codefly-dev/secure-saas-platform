@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: execution
+  labels:
+    deus.dev/environment: staging
+    deus.dev/cluster-role: execution
