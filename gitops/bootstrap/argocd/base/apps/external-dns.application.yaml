@@ -1,0 +1,87 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  source:
+    repoURL: https://kubernetes-sigs.github.io/external-dns/
+    chart: external-dns
+    targetRevision: 1.18.0
+    helm:
+      releaseName: external-dns
+      values: |
+        provider: aws
+        sources:
+          - service
+          - ingress
+          - gateway-httproute
+          - gateway-grpcroute
+          - gateway-tlsroute
+          - gateway-tcproute
+          - gateway-udproute
+        policy: sync
+        registry: txt
+        txtOwnerId: deus-platform
+        txtPrefix: _externaldns.
+        domainFilters: []
+        zoneIdFilters: []
+        aws:
+          region: us-east-1
+          # Pod Identity is configured via Pulumi outside of this chart;
+          # the ServiceAccount referenced here will be associated to a role
+          # with route53:ChangeResourceRecordSets on the configured zone.
+          preferCNAME: false
+          batchChangeSize: 1000
+          zoneType: public
+        serviceAccount:
+          create: true
+          name: external-dns
+        rbac:
+          create: true
+        triggerLoopOnEvent: true
+        interval: 1m
+        logLevel: info
+        logFormat: json
+        deploymentStrategy:
+          type: Recreate
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          fsGroup: 65534
+          seccompProfile:
+            type: RuntimeDefault
+        containerSecurityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

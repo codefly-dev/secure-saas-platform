@@ -14,6 +14,8 @@ resources:
   - apps/vault-secrets-operator.application.yaml
   - apps/vault.application.yaml
   - apps/falco.application.yaml
+  - apps/external-dns.application.yaml
+  - apps/argo-rollouts.application.yaml
   - apps/tailscale-operator.application.yaml
   - platform-cluster-baseline.application.yaml
   - execution-cluster-baseline.application.yaml

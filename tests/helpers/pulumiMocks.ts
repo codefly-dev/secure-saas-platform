@@ -52,6 +52,33 @@ export async function installPulumiMocks() {
                     },
                   ]
                 : args.inputs.firewallStatuses,
+            domainValidationOptions:
+              args.type === "aws:acm/certificate:Certificate"
+                ? [args.inputs.domainName, ...(args.inputs.subjectAlternativeNames ?? [])].map(
+                    (domain: string) => ({
+                      domainName: domain,
+                      resourceRecordName: `_acm-${domain}.`,
+                      resourceRecordType: "CNAME",
+                      resourceRecordValue: `_acm-${domain}-validation.acm.aws`,
+                    }),
+                  )
+                : args.inputs.domainValidationOptions,
+            domainName:
+              args.type === "aws:cloudfront/distribution:Distribution"
+                ? `${args.name}.cloudfront.net`
+                : args.inputs.domainName,
+            hostedZoneId:
+              args.type === "aws:cloudfront/distribution:Distribution"
+                ? "Z2FDTNDATAQYW2"
+                : args.inputs.hostedZoneId,
+            bucketDomainName:
+              args.type === "aws:s3/bucket:Bucket"
+                ? `${args.inputs.bucket ?? args.name}.s3.amazonaws.com`
+                : args.inputs.bucketDomainName,
+            fqdn:
+              args.type === "aws:route53/record:Record"
+                ? `${args.inputs.name}.example.com`
+                : args.inputs.fqdn,
             roots:
               args.type === "aws:organizations/organization:Organization"
                 ? [{ id: "r-root", arn: "arn:aws:organizations::111111111111:root/o-example/r-root", name: "Root" }]

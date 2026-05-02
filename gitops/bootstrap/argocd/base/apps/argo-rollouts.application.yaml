@@ -1,0 +1,89 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: 2.41.0
+    helm:
+      releaseName: argo-rollouts
+      values: |
+        controller:
+          replicas: 2
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+        dashboard:
+          enabled: true
+          replicas: 1
+          # Dashboard is reachable only via the Tailscale operator; never
+          # exposed publicly. Kubernetes Service stays ClusterIP.
+          service:
+            type: ClusterIP
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+        # Notifications go to the security-tooling SNS topic via the
+        # detection stack's EventBridge → SNS pipe. The webhook URL is
+        # injected through ESO from Vault path `kv/argo-rollouts/notifications`.
+        notifications:
+          enabled: true
+          notifiers: |
+            service.webhook.security-events:
+              url: $webhookUrl
+              headers:
+                - name: Content-Type
+                  value: application/json
+        crds:
+          install: true
+        keepCRDs: true
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

@@ -15,3 +15,5 @@ resources:
   - agent-egress.yaml
   - falco.yaml
   - vault.yaml
+  - external-dns.yaml
+  - argo-rollouts.yaml
