@@ -1,0 +1,18 @@
+environment:
+  - secure-saas-infra/dev
+config:
+  aws:region: us-east-1
+  secure-saas-infra:stackKind: argocd
+  secure-saas-infra:deploymentMode: disabled
+  secure-saas-infra:organizationName: deus
+  secure-saas-infra:environment: argocd-platform-dev
+  secure-saas-infra:argocd:
+    # Pulumi stack name of the cluster this Argo CD instance manages.
+    clusterStackRef: your-pulumi-org/secure-saas-infra/platform-dev
+    # Key in the cluster stack's eksClusters output (matches the spoke name).
+    clusterName: platform-dev
+    argocdHostname: argocd-platform-dev.mind.example
+    chartVersion: "8.4.0"
+    # Bootstrap directory relative to the Pulumi run cwd. The Argo CD
+    # stack must run from the repo root so this resolves to gitops/...
+    bootstrapDirectory: gitops/bootstrap/argocd

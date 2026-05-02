@@ -13,6 +13,7 @@
     "verify:onboarding": "node scripts/verify-onboarding.mjs",
     "preflight": "node scripts/preflight.mjs",
     "preflight:strict": "node scripts/preflight.mjs --require-stack-files --strict-placeholders",
+    "bootstrap": "node scripts/bootstrap.mjs",
     "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/tests/*.test.js",
     "test": "npm run validate && npm run test:unit",
     "preview": "pulumi preview",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@pulumi/aws": "^7.0.0",
     "@pulumi/github": "^6.13.1",
+    "@pulumi/kubernetes": "^4.30.0",
     "@pulumi/pulumi": "^3.229.0"
   },
   "devDependencies": {
