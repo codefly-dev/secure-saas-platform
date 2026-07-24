@@ -30,16 +30,8 @@ spec:
         message: Container images must be pinned by digest.
         foreach:
           - list: request.object.spec.containers
-            deny:
-              conditions:
-                all:
-                  - key: "{{ element.image }}"
-                    operator: NotContains
-                    value: "@sha256:"
+            pattern:
+              image: "*@sha256:*"
           - list: request.object.spec.initContainers || `[]`
-            deny:
-              conditions:
-                all:
-                  - key: "{{ element.image }}"
-                    operator: NotContains
-                    value: "@sha256:"
+            pattern:
+              image: "*@sha256:*"

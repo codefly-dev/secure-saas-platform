@@ -11,3 +11,11 @@ patches:
     target:
       kind: Application
       name: execution-cluster-baseline
+  - path: database-infrastructure-project-patch.yaml
+    target:
+      kind: AppProject
+      name: database-infrastructure
+  - path: database-infrastructure-application-patch.yaml
+    target:
+      kind: Application
+      name: database-infrastructure-handoff

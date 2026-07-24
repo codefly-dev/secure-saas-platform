@@ -3,6 +3,7 @@ kind: Namespace
 metadata:
   name: security
   labels:
+    security.deus.dev/service-account-token-policy: restricted
     security.deus.dev/trust-zone: platform
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/audit: restricted

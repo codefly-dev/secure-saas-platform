@@ -1,0 +1,21 @@
+- op: replace
+  path: /spec/destinations
+  value:
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-runtime-warden-saas-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-migration-warden-saas-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-bootstrap-warden-saas-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-runtime-mind-users-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-migration-mind-users-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-bootstrap-mind-users-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-runtime-mind-infra-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-migration-mind-infra-postgres-production
+    - server: https://kubernetes.default.svc
+      namespace: codefly-db-bootstrap-mind-infra-postgres-production

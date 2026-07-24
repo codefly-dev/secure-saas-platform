@@ -2,6 +2,11 @@ node_modules/
 dist/
 dist-test/
 dist-policy/
+dist-management-seed/
+dist-management-seed-policy/
+dist-management-seed-support/
+dist-management-seed-test/
+artifacts/
 .pulumi/
 *.tsbuildinfo
 

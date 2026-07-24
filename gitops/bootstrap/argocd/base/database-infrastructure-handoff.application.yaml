@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: database-infrastructure-handoff
+  namespace: argocd-database
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    security.deus.dev/authority: infrastructure-controller
+spec:
+  project: database-infrastructure
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: codefly-db-runtime-warden-saas-postgres-development
+  source:
+    repoURL: https://github.com/codefly-dev/secure-saas-infra.git
+    path: gitops/generated/database/development
+    targetRevision: main
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false
+      - FailOnSharedResource=true
+      - PruneLast=true
+      - ServerSideApply=true

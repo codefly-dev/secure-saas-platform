@@ -1,0 +1,10 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: database-infrastructure-handoff
+spec:
+  destination:
+    namespace: codefly-db-runtime-warden-saas-postgres-production
+  source:
+    path: gitops/generated/database/production
+    targetRevision: v0.1.0

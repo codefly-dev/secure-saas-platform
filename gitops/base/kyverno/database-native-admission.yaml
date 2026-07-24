@@ -1,0 +1,90 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: database-replicaset-controller-identity
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [replicasets]
+        scope: Namespaced
+  validations:
+    - expression: >-
+        !(object.metadata.namespace == 'database-runtime' ||
+        object.metadata.namespace.startsWith('codefly-db-runtime-')) ||
+        request.userInfo.username == 'system:kube-controller-manager' ||
+        request.userInfo.username ==
+        'system:serviceaccount:kube-system:replicaset-controller'
+      message: SEC_DATABASE_CHILD_ACTOR_DENIED require-database-replicaset-controller-identity
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: database-replicaset-controller-identity
+spec:
+  policyName: database-replicaset-controller-identity
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: database-workload-native-boundary
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps, batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+        scope: Namespaced
+  matchConditions:
+    - name: database-workload-namespace
+      expression: >-
+        request.namespace in
+        ['database-runtime', 'database-migration', 'database-bootstrap'] ||
+        request.namespace.startsWith('codefly-db-runtime-') ||
+        request.namespace.startsWith('codefly-db-migration-') ||
+        request.namespace.startsWith('codefly-db-bootstrap-')
+  validations:
+    - expression: >-
+        !(request.namespace == 'database-runtime' ||
+        request.namespace.startsWith('codefly-db-runtime-')) ||
+        request.resource.resource == 'deployments'
+      message: SEC_DATABASE_WORKLOAD_KIND_DENIED restrict-database-workload-kind
+      reason: Forbidden
+    - expression: >-
+        !(request.namespace == 'database-migration' ||
+        request.namespace.startsWith('codefly-db-migration-')) ||
+        request.resource.resource == 'jobs'
+      message: SEC_DATABASE_WORKLOAD_KIND_DENIED restrict-database-workload-kind
+      reason: Forbidden
+    - expression: >-
+        !(request.namespace == 'database-bootstrap' ||
+        request.namespace.startsWith('codefly-db-bootstrap-')) ||
+        request.resource.resource == 'jobs'
+      message: SEC_DATABASE_WORKLOAD_KIND_DENIED restrict-database-workload-kind
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.template) &&
+        has(object.spec.template.metadata) &&
+        has(object.spec.template.metadata.annotations) &&
+        'security.deus.dev/workload-identity-binding-digest' in
+        object.spec.template.metadata.annotations &&
+        object.spec.template.metadata.annotations[
+        'security.deus.dev/workload-identity-binding-digest'].matches(
+        '^[a-f0-9]{64}$')
+      message: SEC_DATABASE_BINDING_DIGEST_DENIED database-workload-native-boundary
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: database-workload-native-boundary
+spec:
+  policyName: database-workload-native-boundary
+  validationActions: [Deny]

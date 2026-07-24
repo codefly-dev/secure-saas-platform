@@ -59,6 +59,6 @@ spec:
         deny:
           conditions:
             any:
-              - key: "{{ request.object.metadata.annotations.\"security.deus.dev/direct-model-call\" || 'false' }}"
+              - key: '{{ request.object.metadata.annotations."security.deus.dev/direct-model-call" || ''false'' }}'
                 operator: NotEquals
                 value: "false"

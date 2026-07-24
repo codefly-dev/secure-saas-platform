@@ -17,3 +17,4 @@ resources:
   - vault.yaml
   - external-dns.yaml
   - argo-rollouts.yaml
+  - restricted-default-serviceaccounts.yaml

@@ -34,7 +34,7 @@ spec:
                 - metrics-server
       verifyImages:
         - imageReferences:
-            - "*"
+            - "ghcr.io/codefly-dev/secure-saas-infra/*"
           failureAction: Enforce
           required: true
           verifyDigest: true
@@ -43,26 +43,26 @@ spec:
             - count: 1
               entries:
                 - keyless:
-                    subjectRegExp: https://github\.com/[^/]+/[^/]+/\.github/workflows/.+@refs/(heads/main|tags/v.+)
+                    subjectRegExp: https://github\.com/codefly-dev/secure-saas-infra/\.github/workflows/.+@refs/(heads/main|tags/v.+)
                     issuer: https://token.actions.githubusercontent.com
                     rekor:
                       url: https://rekor.sigstore.dev
           attestations:
-            - predicateType: https://slsa.dev/provenance/v1
+            - type: https://slsa.dev/provenance/v1
               attestors:
                 - count: 1
                   entries:
                     - keyless:
-                        subjectRegExp: https://github\.com/[^/]+/[^/]+/\.github/workflows/.+@refs/(heads/main|tags/v.+)
+                        subjectRegExp: https://github\.com/codefly-dev/secure-saas-infra/\.github/workflows/.+@refs/(heads/main|tags/v.+)
                         issuer: https://token.actions.githubusercontent.com
                         rekor:
                           url: https://rekor.sigstore.dev
-            - predicateType: https://spdx.dev/Document
+            - type: https://spdx.dev/Document
               attestors:
                 - count: 1
                   entries:
                     - keyless:
-                        subjectRegExp: https://github\.com/[^/]+/[^/]+/\.github/workflows/.+@refs/(heads/main|tags/v.+)
+                        subjectRegExp: https://github\.com/codefly-dev/secure-saas-infra/\.github/workflows/.+@refs/(heads/main|tags/v.+)
                         issuer: https://token.actions.githubusercontent.com
                         rekor:
                           url: https://rekor.sigstore.dev

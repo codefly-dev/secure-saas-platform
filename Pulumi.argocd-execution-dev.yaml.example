@@ -11,8 +11,13 @@ config:
     clusterStackRef: your-pulumi-org/secure-saas-infra/execution-dev
     # Key in the cluster stack's eksClusters output (matches the spoke name).
     clusterName: execution-dev
+    clusterAccessRoleArn: arn:aws:iam::<set-execution-dev-account-id-after-organization-creation>:role/InfrastructureApplyNonProd-Workload
     argocdHostname: argocd-execution-dev.mind.example
     chartVersion: "8.4.0"
+    oidcIssuer: https://identity.mind.example
+    oidcClientId: argocd-execution-dev
+    oidcClientSecretRef: $oidc.organization.clientSecret
+    oidcAdminGroup: deus:infra:admins
     # Bootstrap directory relative to the Pulumi run cwd. The Argo CD
     # stack must run from the repo root so this resolves to gitops/...
     bootstrapDirectory: gitops/bootstrap/argocd

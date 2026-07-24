@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-16"
 spec:
-  project: default
+  project: platform-operators
   destination:
     server: https://kubernetes.default.svc
     namespace: istio-system

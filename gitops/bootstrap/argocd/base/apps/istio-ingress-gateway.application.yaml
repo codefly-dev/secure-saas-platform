@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-14"
 spec:
-  project: default
+  project: platform-operators
   destination:
     server: https://kubernetes.default.svc
     namespace: istio-ingress
@@ -22,9 +22,15 @@ spec:
           maxReplicas: 5
         service:
           type: LoadBalancer
+          loadBalancerClass: eks.amazonaws.com/nlb
+          allocateLoadBalancerNodePorts: false
           annotations:
             service.beta.kubernetes.io/aws-load-balancer-scheme: internal
             service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+            service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: HTTP
+            service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "15021"
+            service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /healthz/ready
+            service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true
   syncPolicy:
     automated:
       prune: true

@@ -3,6 +3,7 @@ kind: Namespace
 metadata:
   name: workloads
   labels:
+    security.deus.dev/service-account-token-policy: restricted
     security.deus.dev/trust-zone: application
     istio.io/dataplane-mode: ambient
     pod-security.kubernetes.io/enforce: restricted

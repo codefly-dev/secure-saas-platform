@@ -1,0 +1,131 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: database-controller-native-scope
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces, serviceaccounts]
+      - apiGroups: [networking.k8s.aws]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [applicationnetworkpolicies]
+      - apiGroups: [eks.amazonaws.com]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [nodeclasses]
+      - apiGroups: [karpenter.sh]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [nodepools]
+  matchConditions:
+    - name: exact-database-controller
+      expression: >-
+        request.userInfo.username ==
+        'system:serviceaccount:argocd-database:database-infrastructure-application-controller'
+  validations:
+    - expression: request.operation != 'DELETE'
+      message: SEC_DATABASE_CONTROLLER_DELETE_DENIED database-controller-native-scope
+      reason: Forbidden
+    - expression: >-
+        !(request.resource.group == '' &&
+        request.resource.resource == 'namespaces') ||
+        request.name.matches(
+        '^codefly-db-(runtime|migration|bootstrap)-(warden-saas-postgres|mind-users-postgres|mind-infra-postgres)-(development|staging|production)$')
+      message: SEC_DATABASE_CONTROLLER_SCOPE_DENIED database-controller-native-scope
+      reason: Forbidden
+    - expression: >-
+        !((request.resource.group == '' &&
+        request.resource.resource == 'serviceaccounts') ||
+        (request.resource.group == 'networking.k8s.aws' &&
+        request.resource.resource == 'applicationnetworkpolicies')) ||
+        request.namespace.matches(
+        '^codefly-db-(runtime|migration|bootstrap)-(warden-saas-postgres|mind-users-postgres|mind-infra-postgres)-(development|staging|production)$')
+      message: SEC_DATABASE_CONTROLLER_SCOPE_DENIED database-controller-native-scope
+      reason: Forbidden
+    - expression: >-
+        !((request.resource.group == 'eks.amazonaws.com' &&
+        request.resource.resource == 'nodeclasses') ||
+        (request.resource.group == 'karpenter.sh' &&
+        request.resource.resource == 'nodepools')) ||
+        request.name.matches(
+        '^(warden-saas-postgres|mind-users-postgres|mind-infra-postgres)-(runtime|migration|bootstrap)-access$')
+      message: SEC_DATABASE_CONTROLLER_SCOPE_DENIED database-controller-native-scope
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: database-controller-native-scope
+spec:
+  policyName: database-controller-native-scope
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: database-controller-native-ownership
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces, serviceaccounts]
+      - apiGroups: [networking.k8s.aws]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [applicationnetworkpolicies]
+      - apiGroups: [eks.amazonaws.com]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [nodeclasses]
+      - apiGroups: [karpenter.sh]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [nodepools]
+  validations:
+    - expression: >-
+        !(request.resource.group == '' &&
+        request.resource.resource == 'namespaces' &&
+        request.name.matches(
+        '^codefly-db-(runtime|migration|bootstrap)-(warden-saas-postgres|mind-users-postgres|mind-infra-postgres)-(development|staging|production)$')) ||
+        request.userInfo.username ==
+        'system:serviceaccount:argocd-database:database-infrastructure-application-controller'
+      message: SEC_DATABASE_CONTROLLER_IDENTITY_DENIED database-controller-native-ownership
+      reason: Forbidden
+    - expression: >-
+        !(((request.resource.group == '' &&
+        request.resource.resource == 'serviceaccounts') ||
+        (request.resource.group == 'networking.k8s.aws' &&
+        request.resource.resource == 'applicationnetworkpolicies')) &&
+        request.namespace.matches(
+        '^codefly-db-(runtime|migration|bootstrap)-(warden-saas-postgres|mind-users-postgres|mind-infra-postgres)-(development|staging|production)$')) ||
+        request.userInfo.username ==
+        'system:serviceaccount:argocd-database:database-infrastructure-application-controller'
+      message: SEC_DATABASE_CONTROLLER_IDENTITY_DENIED database-controller-native-ownership
+      reason: Forbidden
+    - expression: >-
+        !(((request.resource.group == 'eks.amazonaws.com' &&
+        request.resource.resource == 'nodeclasses') ||
+        (request.resource.group == 'karpenter.sh' &&
+        request.resource.resource == 'nodepools')) &&
+        request.name.matches(
+        '^(warden-saas-postgres|mind-users-postgres|mind-infra-postgres)-(runtime|migration|bootstrap)-access$')) ||
+        request.userInfo.username ==
+        'system:serviceaccount:argocd-database:database-infrastructure-application-controller'
+      message: SEC_DATABASE_CONTROLLER_IDENTITY_DENIED database-controller-native-ownership
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: database-controller-native-ownership
+spec:
+  policyName: database-controller-native-ownership
+  validationActions: [Deny]

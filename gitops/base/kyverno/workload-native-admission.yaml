@@ -1,0 +1,52 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: restricted-workload-native-baseline
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+        scope: Namespaced
+  matchConditions:
+    - name: restricted-application-namespace
+      expression: >-
+        request.namespace in
+        ['agent-broker', 'agent-egress', 'execution', 'platform', 'security',
+        'workloads']
+  validations:
+    - expression: >-
+        has(object.spec.securityContext) &&
+        has(object.spec.securityContext.runAsNonRoot) &&
+        object.spec.securityContext.runAsNonRoot == true
+      message: SEC_NATIVE_RUN_AS_NON_ROOT_DENIED restricted-workload-native-baseline
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.securityContext) &&
+        has(object.spec.securityContext.seccompProfile) &&
+        object.spec.securityContext.seccompProfile.type == 'RuntimeDefault'
+      message: SEC_NATIVE_SECCOMP_DENIED restricted-workload-native-baseline
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.hostNetwork) || object.spec.hostNetwork == false
+      message: SEC_NATIVE_HOST_NAMESPACE_DENIED restricted-workload-native-baseline
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.hostPID) || object.spec.hostPID == false
+      message: SEC_NATIVE_HOST_NAMESPACE_DENIED restricted-workload-native-baseline
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.hostIPC) || object.spec.hostIPC == false
+      message: SEC_NATIVE_HOST_NAMESPACE_DENIED restricted-workload-native-baseline
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: restricted-workload-native-baseline
+spec:
+  policyName: restricted-workload-native-baseline
+  validationActions: [Deny]

@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://security.deus.dev/schemas/disposable-cluster-validation-v1.schema.json",
+  "title": "Disposable cluster infrastructure identity validation evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "generatedAt",
+    "completedAt",
+    "durationMs",
+    "pass",
+    "runId",
+    "scope",
+    "source",
+    "tools",
+    "cluster",
+    "inputs",
+    "checks",
+    "controllerImages",
+    "cleanup",
+    "reportDigest"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "security.deus.dev/disposable-cluster-validation/v1alpha1"
+    },
+    "kind": { "const": "DisposableClusterValidationReport" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "durationMs": { "type": "integer", "minimum": 0, "maximum": 3600000 },
+    "pass": { "const": true },
+    "runId": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^secure-saas-infra-g5-[0-9]+-[a-f0-9]{8}$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "proves", "excludes"],
+      "properties": {
+        "environment": { "const": "local-k3s" },
+        "proves": {
+          "const": [
+            "database-access-admission-shape",
+            "database-controller-actor-authorization",
+            "database-node-pool-reservation",
+            "eks-shaped-token-manifest-admission",
+            "kyverno-admission-enforcement",
+            "kyverno-failure-policy-configured",
+            "protected-admission-denied-during-kyverno-outage",
+            "service-account-token-policy"
+          ]
+        },
+        "excludes": {
+          "const": [
+            "application-network-policy-enforcement",
+            "aws-sts-role-assumption",
+            "eks-auto-mode-nodeclass-admission",
+            "eks-pod-identity-agent-runtime",
+            "pod-security-group-enforcement",
+            "rds-iam-proxy-connectivity"
+          ]
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "dirty"],
+      "properties": {
+        "revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "dirty": { "type": "boolean" }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "docker",
+        "kubectl",
+        "helm",
+        "dockerContext",
+        "dockerEndpoint",
+        "kubernetes",
+        "kyverno"
+      ],
+      "properties": {
+        "docker": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kubectl": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "helm": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "dockerContext": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "dockerEndpoint": {
+          "type": "string",
+          "pattern": "^unix://",
+          "maxLength": 1024
+        },
+        "kubernetes": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "kyverno": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 128
+        }
+      }
+    },
+    "cluster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespaceUid", "apiServer", "caSha256"],
+      "properties": {
+        "namespaceUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "apiServer": {
+          "type": "string",
+          "pattern": "^https://127\\.0\\.0\\.1:[0-9]+$",
+          "maxLength": 128
+        },
+        "caSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gitops/base/kyverno/deny-service-account-tokens.yaml",
+        "gitops/base/kyverno/authorize-database-infrastructure-controller.yaml",
+        "gitops/base/kyverno/database-controller-native-admission.yaml",
+        "gitops/base/kyverno/database-native-admission.yaml",
+        "gitops/base/kyverno/workload-native-admission.yaml",
+        "gitops/base/namespaces/restricted-default-serviceaccounts.yaml",
+        "src/databaseAccess.ts",
+        "dist/databaseAccess.js",
+        "scripts/validate-disposable-cluster.mjs",
+        "scripts/verify-disposable-cluster-report.mjs",
+        "schemas/disposable-cluster-validation-v1.schema.json",
+        "k3sImage",
+        "kyvernoChart",
+        "fixtureImage"
+      ],
+      "properties": {
+        "gitops/base/kyverno/deny-service-account-tokens.yaml": {
+          "$ref": "#/$defs/sha256"
+        },
+        "gitops/base/kyverno/authorize-database-infrastructure-controller.yaml": {
+          "$ref": "#/$defs/sha256"
+        },
+        "gitops/base/kyverno/database-controller-native-admission.yaml": {
+          "$ref": "#/$defs/sha256"
+        },
+        "gitops/base/kyverno/database-native-admission.yaml": {
+          "$ref": "#/$defs/sha256"
+        },
+        "gitops/base/kyverno/workload-native-admission.yaml": {
+          "$ref": "#/$defs/sha256"
+        },
+        "gitops/base/namespaces/restricted-default-serviceaccounts.yaml": {
+          "$ref": "#/$defs/sha256"
+        },
+        "src/databaseAccess.ts": { "$ref": "#/$defs/sha256" },
+        "dist/databaseAccess.js": { "$ref": "#/$defs/sha256" },
+        "scripts/validate-disposable-cluster.mjs": {
+          "$ref": "#/$defs/sha256"
+        },
+        "scripts/verify-disposable-cluster-report.mjs": {
+          "$ref": "#/$defs/sha256"
+        },
+        "schemas/disposable-cluster-validation-v1.schema.json": {
+          "$ref": "#/$defs/sha256"
+        },
+        "k3sImage": { "$ref": "#/$defs/imageDigest" },
+        "kyvernoChart": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "digest"],
+          "properties": {
+            "version": { "const": "3.7.0" },
+            "digest": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "fixtureImage": { "$ref": "#/$defs/imageDigest" }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 61,
+      "maxItems": 61,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "pass"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9-]+$"
+          },
+          "pass": { "const": true },
+          "denialCode": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Z][A-Z0-9_]+$"
+          },
+          "rule": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9-]+$"
+          }
+        },
+        "dependentRequired": {
+          "denialCode": ["rule"],
+          "rule": ["denialCode"]
+        }
+      }
+    },
+    "controllerImages": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "container", "image", "imageId"],
+        "properties": {
+          "component": { "$ref": "#/$defs/name" },
+          "container": { "$ref": "#/$defs/name" },
+          "image": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "imageId": { "$ref": "#/$defs/imageDigest" }
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["containerRemoved", "temporaryDirectoryRemoved"],
+      "properties": {
+        "containerRemoved": { "const": true },
+        "temporaryDirectoryRemoved": { "const": true }
+      }
+    },
+    "failure": { "type": "string", "minLength": 1, "maxLength": 8192 },
+    "reportDigest": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "name": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+    },
+    "imageDigest": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$"
+    }
+  }
+}

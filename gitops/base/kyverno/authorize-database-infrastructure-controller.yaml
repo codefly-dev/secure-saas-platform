@@ -1,0 +1,270 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: authorize-database-infrastructure-controller
+  annotations:
+    policies.kyverno.io/title: Authorize database infrastructure controller
+    policies.kyverno.io/category: Identity and tenancy
+    policies.kyverno.io/severity: critical
+spec:
+  admission: true
+  background: false
+  failurePolicy: Fail
+  validationFailureAction: Enforce
+  rules:
+    - name: database-namespaces-controller-only
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              names:
+                - codefly-db-runtime-warden-saas-postgres-*
+                - codefly-db-migration-warden-saas-postgres-*
+                - codefly-db-bootstrap-warden-saas-postgres-*
+                - codefly-db-runtime-mind-users-postgres-*
+                - codefly-db-migration-mind-users-postgres-*
+                - codefly-db-bootstrap-mind-users-postgres-*
+                - codefly-db-runtime-mind-infra-postgres-*
+                - codefly-db-migration-mind-infra-postgres-*
+                - codefly-db-bootstrap-mind-infra-postgres-*
+      validate:
+        message: SEC_DATABASE_CONTROLLER_IDENTITY_DENIED
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.userInfo.username || '' }}"
+                operator: NotEquals
+                value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+    - name: database-namespaced-resources-controller-only
+      match:
+        any:
+          - resources:
+              kinds: [ServiceAccount, ApplicationNetworkPolicy]
+              namespaces:
+                - codefly-db-runtime-warden-saas-postgres-*
+                - codefly-db-migration-warden-saas-postgres-*
+                - codefly-db-bootstrap-warden-saas-postgres-*
+                - codefly-db-runtime-mind-users-postgres-*
+                - codefly-db-migration-mind-users-postgres-*
+                - codefly-db-bootstrap-mind-users-postgres-*
+                - codefly-db-runtime-mind-infra-postgres-*
+                - codefly-db-migration-mind-infra-postgres-*
+                - codefly-db-bootstrap-mind-infra-postgres-*
+      validate:
+        message: SEC_DATABASE_CONTROLLER_IDENTITY_DENIED
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.userInfo.username || '' }}"
+                operator: NotEquals
+                value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+    - name: database-cluster-resources-controller-only
+      match:
+        any:
+          - resources:
+              kinds: [NodeClass, NodePool]
+              names:
+                - warden-saas-postgres-runtime-access
+                - warden-saas-postgres-migration-access
+                - warden-saas-postgres-bootstrap-access
+                - mind-users-postgres-runtime-access
+                - mind-users-postgres-migration-access
+                - mind-users-postgres-bootstrap-access
+                - mind-infra-postgres-runtime-access
+                - mind-infra-postgres-migration-access
+                - mind-infra-postgres-bootstrap-access
+      validate:
+        message: SEC_DATABASE_CONTROLLER_IDENTITY_DENIED
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.userInfo.username || '' }}"
+                operator: NotEquals
+                value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+    - name: database-controller-namespace-ceiling
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              operations: [CREATE, UPDATE, DELETE]
+      preconditions:
+        all:
+          - key: "{{ request.userInfo.username || '' }}"
+            operator: Equals
+            value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+      validate:
+        message: SEC_DATABASE_CONTROLLER_SCOPE_DENIED
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-runtime-warden-saas-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-migration-warden-saas-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-bootstrap-warden-saas-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-runtime-mind-users-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-migration-mind-users-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-bootstrap-mind-users-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-runtime-mind-infra-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-migration-mind-infra-postgres-*
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: codefly-db-bootstrap-mind-infra-postgres-*
+    - name: database-controller-namespaced-ceiling
+      match:
+        any:
+          - resources:
+              kinds: [ServiceAccount, ApplicationNetworkPolicy]
+              operations: [CREATE, UPDATE, DELETE]
+      preconditions:
+        all:
+          - key: "{{ request.userInfo.username || '' }}"
+            operator: Equals
+            value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+      validate:
+        message: SEC_DATABASE_CONTROLLER_SCOPE_DENIED
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-runtime-warden-saas-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-migration-warden-saas-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-bootstrap-warden-saas-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-runtime-mind-users-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-migration-mind-users-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-bootstrap-mind-users-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-runtime-mind-infra-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-migration-mind-infra-postgres-*
+              - key: "{{ request.namespace || '' }}"
+                operator: NotEquals
+                value: codefly-db-bootstrap-mind-infra-postgres-*
+    - name: database-controller-cluster-ceiling
+      match:
+        any:
+          - resources:
+              kinds: [NodeClass, NodePool]
+              operations: [CREATE, UPDATE, DELETE]
+      preconditions:
+        all:
+          - key: "{{ request.userInfo.username || '' }}"
+            operator: Equals
+            value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+      validate:
+        message: SEC_DATABASE_CONTROLLER_SCOPE_DENIED
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: warden-saas-postgres-runtime-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: warden-saas-postgres-migration-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: warden-saas-postgres-bootstrap-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: mind-users-postgres-runtime-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: mind-users-postgres-migration-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: mind-users-postgres-bootstrap-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: mind-infra-postgres-runtime-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: mind-infra-postgres-migration-access
+              - key: "{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}"
+                operator: NotEquals
+                value: mind-infra-postgres-bootstrap-access
+    - name: database-controller-forbidden-kinds
+      match:
+        any:
+          - resources:
+              kinds:
+                - ClusterPolicy
+                - ClusterRole
+                - ClusterRoleBinding
+                - CronJob
+                - DaemonSet
+                - Deployment
+                - Job
+                - Node
+                - Pod
+                - Pod/binding
+                - ReplicaSet
+                - Role
+                - RoleBinding
+                - Secret
+                - StatefulSet
+              operations: [CREATE, UPDATE, DELETE, CONNECT]
+      preconditions:
+        all:
+          - key: "{{ request.userInfo.username || '' }}"
+            operator: Equals
+            value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+      validate:
+        message: SEC_DATABASE_CONTROLLER_KIND_DENIED
+        deny:
+          conditions:
+            any:
+              - key: true
+                operator: Equals
+                value: true
+    - name: database-controller-delete-denied
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+                - ServiceAccount
+                - ApplicationNetworkPolicy
+                - NodeClass
+                - NodePool
+              operations: [DELETE]
+      preconditions:
+        all:
+          - key: "{{ request.userInfo.username || '' }}"
+            operator: Equals
+            value: system:serviceaccount:argocd-database:database-infrastructure-application-controller
+      validate:
+        message: SEC_DATABASE_CONTROLLER_DELETE_DENIED
+        deny:
+          conditions:
+            any:
+              - key: true
+                operator: Equals
+                value: true

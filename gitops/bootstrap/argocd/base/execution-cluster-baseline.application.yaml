@@ -6,12 +6,12 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "10"
 spec:
-  project: default
+  project: bootstrap
   destination:
     server: https://kubernetes.default.svc
     namespace: execution
   source:
-    repoURL: https://github.com/your-org/secure-saas-infra.git
+    repoURL: https://github.com/codefly-dev/secure-saas-infra.git
     targetRevision: main
     path: gitops/overlays/dev/execution
   syncPolicy:

@@ -1,8 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - authorize-database-infrastructure-controller.yaml
+  - database-controller-native-admission.yaml
+  - database-native-admission.yaml
+  - workload-native-admission.yaml
   - pod-security-restricted.yaml
   - disallow-unsafe-pods.yaml
+  - deny-service-account-tokens.yaml
   - require-image-digests.yaml
   - require-execution-sandbox.yaml
   - verify-signed-provenance.yaml
