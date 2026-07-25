@@ -22,6 +22,7 @@
     "bootstrap:verify-access-bundle": "node scripts/verify-management-seed-access.mjs",
     "bootstrap:provision-access": "./scripts/management-seed-access-provisioner",
     "bootstrap": "node scripts/bootstrap.mjs",
+    "pulumi:backup": "node scripts/backup-pulumi-cloud-state.mjs",
     "test:iac": "node -e \"require('node:fs').rmSync('dist-management-seed-test',{recursive:true,force:true})\" && tsc -p tsconfig.management-seed-test.json && node -e \"const f=require('node:fs');f.mkdirSync('dist-management-seed-test/scripts',{recursive:true});for(const n of ['management-seed-model.cjs','management-seed-policy-model.cjs'])f.copyFileSync('scripts/'+n,'dist-management-seed-test/scripts/'+n)\" && node scripts/run-iac-unit-tests.mjs",
     "test": "npm run validate:g0 && npm run validate:g1",
     "security:secrets": "./scripts/scan-source-secrets",
