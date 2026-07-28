@@ -358,7 +358,7 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
   }
   assert.deepEqual(
     [...revisions],
-    ["17c2aab74a2dadab146d2d63d4e1fa97e057c922"],
+    ["1b932460fb825745fdc0a6d8c23fbdf5d196f1bb"],
   );
   assert.deepEqual([...chartVersions], ["10.2.1"]);
 });
@@ -557,7 +557,7 @@ spec:
     namespace: platform
   source:
     repoURL: https://github.com/codefly-dev/secure-saas-infra.git
-    targetRevision: 17c2aab74a2dadab146d2d63d4e1fa97e057c922
+    targetRevision: 1b932460fb825745fdc0a6d8c23fbdf5d196f1bb
     path: gitops/overlays/dev/platform
 `,
         );
