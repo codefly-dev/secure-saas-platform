@@ -6,16 +6,23 @@ import {
   databaseArgocdHelmValues,
   databaseInfrastructureControllerRules,
 } from "../src/argocd";
-import { validateArgocdConfig, type ArgocdConfig } from "../src/config";
+import {
+  argocdBootstrapHandoff,
+  validateArgocdConfig,
+  type ArgocdConfig,
+} from "../src/config";
 
 const config: ArgocdConfig = {
   clusterStackRef: "deus/platform/dev",
   clusterName: "platform-dev",
+  clusterRole: "platform",
   clusterAccessRoleArn:
     "arn:aws:iam::888877776666:role/InfrastructureApplyNonProd-Workload",
   argocdHostname: "argocd.internal.example.com",
-  chartVersion: "8.4.0",
-  bootstrapDirectory: "gitops/bootstrap/argocd/overlays/dev",
+  chartVersion: "10.2.1",
+  bootstrapRepository: "https://github.com/codefly-dev/secure-saas-infra.git",
+  bootstrapRevision: "a".repeat(40),
+  bootstrapDirectory: "gitops/bootstrap/argocd/overlays/dev/platform",
   oidcIssuer: "https://identity.example.com/realms/deus",
   oidcClientId: "argocd-platform-dev",
   oidcClientSecretRef: "$oidc.organization.clientSecret",
@@ -46,6 +53,7 @@ test("Argo CD is OIDC-only with local admin, anonymous, and ambient readonly acc
   assert.equal(values.configs.rbac.scopes, "[groups]");
   assert.equal(values.server.service.type, "ClusterIP");
   assert.equal(values.configs.cm["exec.enabled"], false);
+  assert.equal(values.configs.cm["resource.respectRBAC"], "strict");
   assert.equal(values.controller.clusterRoleRules.enabled, true);
   assert.equal(
     JSON.stringify(values.controller.clusterRoleRules.rules).includes('"*"'),
@@ -70,6 +78,21 @@ test("Argo CD EKS authentication always assumes one explicit member-account role
       "--role-arn",
       config.clusterAccessRoleArn,
     ],
+  );
+});
+
+test("Argo CD publishes a credential-free exact bootstrap handoff", () => {
+  const handoff = argocdBootstrapHandoff(config);
+  assert.deepEqual(handoff, {
+    clusterRole: "platform",
+    clusterName: "platform-dev",
+    repository: "https://github.com/codefly-dev/secure-saas-infra.git",
+    revision: "a".repeat(40),
+    bootstrapEntrypoint: "gitops/bootstrap/argocd/overlays/dev/platform",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(handoff),
+    /accessRole|arn:aws|certificate|credential|endpoint|password|secret|token/i,
   );
 });
 
@@ -118,7 +141,20 @@ test("Argo CD rejects credential-bearing issuers, secret values, wildcard groups
     [{ oidcClientSecretRef: "actual-secret" }, /secret-key reference/],
     [{ oidcAdminGroup: "deus:*" }, /exact OIDC group/],
     [{ chartVersion: "latest" }, /fully-qualified semver/],
-    [{ bootstrapDirectory: "../untrusted" }, /owned Argo CD bootstrap/],
+    [
+      { bootstrapRepository: "https://user:pass@example.invalid/repo" },
+      /credential-free GitOps repository/,
+    ],
+    [{ bootstrapRevision: "main" }, /full Git commit SHA/],
+    [{ bootstrapDirectory: "../untrusted" }, /bootstrap handoff/],
+    [
+      {
+        bootstrapDirectory:
+          "gitops/bootstrap/argocd/overlays/production/platform",
+      },
+      /bootstrap handoff/,
+    ],
+    [{ clusterRole: "execution" }, /bootstrap handoff/],
     [{ clusterAccessRoleArn: "*" }, /exact IAM role ARN/],
   ];
   for (const [change, expected] of cases) {

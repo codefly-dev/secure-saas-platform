@@ -5,4 +5,3 @@ metadata:
 spec:
   source:
     path: gitops/overlays/production/platform
-    targetRevision: v0.1.0

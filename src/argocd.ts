@@ -1,7 +1,12 @@
 import * as aws from "@pulumi/aws";
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
-import { ArgocdConfig, baseTags, named } from "./config";
+import {
+  ArgocdConfig,
+  argocdBootstrapHandoff,
+  baseTags,
+  named,
+} from "./config";
 
 export interface ArgocdResult {
   namespace: k8s.core.v1.Namespace;
@@ -9,6 +14,13 @@ export interface ArgocdResult {
   databaseNamespace: k8s.core.v1.Namespace;
   databaseRelease: k8s.helm.v3.Release;
   bootstrap: k8s.kustomize.v2.Directory;
+  handoff: {
+    clusterRole: "platform" | "execution";
+    clusterName: string;
+    repository: string;
+    revision: string;
+    bootstrapEntrypoint: string;
+  };
 }
 
 export function createArgocd(config: ArgocdConfig): ArgocdResult {
@@ -151,9 +163,6 @@ export function createArgocd(config: ArgocdConfig): ArgocdResult {
     { provider, dependsOn: [databaseNamespace, release] },
   );
 
-  // Apply the in-repo bootstrap kustomize so Argo CD self-manages every
-  // platform application + per-cluster baseline. After this step Argo CD
-  // pulls from the configured GitOps repo on its own.
   const bootstrap = new k8s.kustomize.v2.Directory(
     named("argocd-bootstrap"),
     {
@@ -168,6 +177,7 @@ export function createArgocd(config: ArgocdConfig): ArgocdResult {
     databaseNamespace,
     databaseRelease,
     bootstrap,
+    handoff: argocdBootstrapHandoff(config),
   };
 }
 
@@ -202,6 +212,7 @@ export function argocdHelmValues(config: ArgocdConfig) {
       cm: {
         "timeout.reconciliation": "180s",
         "application.resourceTrackingMethod": "annotation",
+        "resource.respectRBAC": "strict",
         "exec.enabled": false,
         "users.anonymous.enabled": false,
         "admin.enabled": false,

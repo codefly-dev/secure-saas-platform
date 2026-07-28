@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../base
+patches:
+  - path: execution-application-patch.yaml
+    target:
+      kind: Application
+      name: execution-cluster-baseline
+  - patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: platform-only
+    target:
+      kind: Application
+      name: (argo-rollouts|cert-manager|database-infrastructure-handoff|external-dns|gateway-api-crds|istio-ingress-gateway|platform-cluster-baseline|tailscale-operator|vault|vault-secrets-operator)
+  - patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: database-infrastructure
+    target:
+      kind: AppProject
+      name: database-infrastructure
