@@ -480,6 +480,13 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
         config.bootstrap.entrypoint,
         `gitops/bootstrap/argocd/overlays/${overlayEnvironment}/${clusterRole}`,
       );
+      assert.doesNotThrow(() =>
+        execFileSync("git", [
+          "cat-file",
+          "-e",
+          `${config.bootstrap.revision}:${config.bootstrap.entrypoint}/kustomization.yaml`,
+        ]),
+      );
       const rendered = parseAllDocuments(
         execFileSync("kubectl", ["kustomize", config.bootstrap.entrypoint], {
           encoding: "utf8",
@@ -493,13 +500,20 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
           entry.metadata?.name === `${clusterRole}-cluster-baseline`,
       );
       assert.match(baseline.spec.source.targetRevision, /^[a-f0-9]{40}$/);
+      assert.doesNotThrow(() =>
+        execFileSync("git", [
+          "cat-file",
+          "-e",
+          `${baseline.spec.source.targetRevision}:${baseline.spec.source.path}/kustomization.yaml`,
+        ]),
+      );
       revisions.add(config.bootstrap.revision);
       chartVersions.add(config.chartVersion);
     }
   }
   assert.deepEqual(
     [...revisions],
-    ["1b932460fb825745fdc0a6d8c23fbdf5d196f1bb"],
+    ["6f009581b7148b09d5341bbdc791200c78ba3e57"],
   );
   assert.deepEqual([...chartVersions], ["10.2.1"]);
 });
