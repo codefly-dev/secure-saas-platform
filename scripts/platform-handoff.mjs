@@ -1,27 +1,33 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
-const schemaPath = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
-  "../schemas/platform-iac-handoff-v1.schema.json",
+const schemaPath = fileURLToPath(
+  new URL("../schemas/platform-iac-handoff-v1.schema.json", import.meta.url),
 );
+const schema = parseJson(readFileSync(schemaPath, "utf8"), schemaPath);
+const ajv = new Ajv2020({
+  allErrors: true,
+  allowUnionTypes: false,
+  strict: true,
+  validateFormats: true,
+});
+addFormats(ajv);
+const validate = ajv.compile(schema);
 
 export function verifyPlatformHandoff(handoffFile, publicKeyFile) {
   const handoffPath = regularFile(handoffFile, "handoff");
   const publicKeyPath = regularFile(publicKeyFile, "public key");
   const handoff = parseJson(readFileSync(handoffPath, "utf8"), handoffPath);
-  const schema = parseJson(readFileSync(schemaPath, "utf8"), schemaPath);
-  const ajv = new Ajv2020({
-    allErrors: true,
-    allowUnionTypes: false,
-    strict: true,
-    validateFormats: true,
-  });
-  addFormats(ajv);
-  const validate = ajv.compile(schema);
+  const publicKey = createPublicKey(readFileSync(publicKeyPath));
+  verifyPlatformHandoffDocument(handoff, publicKey);
+  return handoff;
+}
+
+function verifyPlatformHandoffDocument(handoff, publicKey) {
   if (!validate(handoff)) {
     fail(
       `schema validation failed:\n${(validate.errors ?? [])
@@ -37,7 +43,6 @@ export function verifyPlatformHandoff(handoffFile, publicKeyFile) {
   if (handoff.specDigest !== specDigest) {
     fail("specDigest does not bind the canonical handoff spec.");
   }
-  const publicKey = createPublicKey(readFileSync(publicKeyPath));
   if (
     publicKey.asymmetricKeyType !== "ec" ||
     publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1"
@@ -47,6 +52,9 @@ export function verifyPlatformHandoff(handoffFile, publicKeyFile) {
   const keyId = sha256(publicKey.export({ type: "spki", format: "der" }));
   if (handoff.signature.keyId !== keyId) {
     fail("signature keyId does not match the reviewed public key.");
+  }
+  if (handoff.signature.publicKeyReference !== `key-id://sha256/${keyId}`) {
+    fail("signature publicKeyReference does not match signature keyId.");
   }
   if (
     !verify(
@@ -58,7 +66,36 @@ export function verifyPlatformHandoff(handoffFile, publicKeyFile) {
   ) {
     fail("handoff signature verification failed.");
   }
-  return handoff;
+}
+
+export function assertKubeconfigBinding(spec, config) {
+  if (config?.clusters?.[0]?.cluster?.server !== spec.cluster.endpoint) {
+    fail("kubeconfig endpoint does not match the signed handoff.");
+  }
+  const certificateAuthorityData =
+    config.clusters?.[0]?.cluster?.["certificate-authority-data"];
+  if (typeof certificateAuthorityData !== "string") {
+    fail("kubeconfig must contain inline certificate-authority-data.");
+  }
+  const certificateAuthorityReference = `sha256:${sha256(
+    decodeBase64(
+      certificateAuthorityData,
+      "kubeconfig certificate-authority-data",
+    ),
+  )}`;
+  if (
+    certificateAuthorityReference !== spec.cluster.certificateAuthorityReference
+  ) {
+    fail("kubeconfig certificate authority does not match the signed handoff.");
+  }
+  const execArgs = config.users?.[0]?.user?.exec?.args ?? [];
+  const roleIndex = execArgs.indexOf("--role-arn");
+  if (
+    roleIndex < 0 ||
+    execArgs[roleIndex + 1] !== spec.bootstrapIdentity.principalArn
+  ) {
+    fail("kubeconfig bootstrap identity does not match the signed handoff.");
+  }
 }
 
 export function canonicalJson(value) {
@@ -104,17 +141,47 @@ function assertBindings(spec) {
   }
   const { accountId, region, clusterArn, secretsEncryptionKeyArn } =
     spec.cloudResources;
+  const cluster = parseArn(
+    clusterArn,
+    /^arn:(aws|aws-us-gov|aws-cn):eks:([^:]+):(\d{12}):cluster\/([^/]+)$/,
+    "EKS cluster",
+  );
+  const encryptionKey = parseArn(
+    secretsEncryptionKeyArn,
+    /^arn:(aws|aws-us-gov|aws-cn):kms:([^:]+):(\d{12}):key\/([A-Za-z0-9-]+)$/,
+    "KMS key",
+  );
+  const principal = parseArn(
+    spec.bootstrapIdentity.principalArn,
+    /^arn:(aws|aws-us-gov|aws-cn):iam::(\d{12}):role\/([A-Za-z0-9+=,.@_/-]+)$/,
+    "bootstrap role",
+  );
+  const partition = partitionForRegion(region);
   if (
-    !clusterArn.startsWith(
-      `arn:aws:eks:${region}:${accountId}:cluster/${name}`,
-    ) ||
-    !secretsEncryptionKeyArn.startsWith(
-      `arn:aws:kms:${region}:${accountId}:key/`,
-    ) ||
-    !spec.bootstrapIdentity.principalArn.includes(`::${accountId}:role/`)
+    cluster[1] !== partition ||
+    encryptionKey[1] !== partition ||
+    principal[1] !== partition ||
+    cluster[2] !== region ||
+    encryptionKey[2] !== region ||
+    cluster[3] !== accountId ||
+    encryptionKey[3] !== accountId ||
+    principal[2] !== accountId ||
+    cluster[4] !== name
   ) {
     fail("cloud resource and bootstrap identity references cross boundaries.");
   }
+}
+
+function parseArn(value, pattern, label) {
+  const match = pattern.exec(value);
+  if (!match) fail(`${label} ARN is invalid.`);
+  return match;
+}
+
+function partitionForRegion(region) {
+  if (region.startsWith("us-gov-")) return "aws-us-gov";
+  if (region.startsWith("cn-")) return "aws-cn";
+  return "aws";
 }
 
 function assertCredentialFree(value, currentPath = "handoff") {
@@ -131,10 +198,15 @@ function assertCredentialFree(value, currentPath = "handoff") {
     ) {
       fail(`${currentPath} contains private key material.`);
     }
-    if (typeof value === "string" && /^(?:https?|ssh):\/\//.test(value)) {
-      const url = new URL(value);
-      if (url.username || url.password) {
-        fail(`${currentPath} contains URL credentials.`);
+    if (typeof value === "string" && /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+      const reference = new URL(value);
+      if (
+        reference.username ||
+        reference.password ||
+        reference.search ||
+        reference.hash
+      ) {
+        fail(`${currentPath} contains credentials or mutable URL parameters.`);
       }
     }
     return;
@@ -149,6 +221,22 @@ function assertCredentialFree(value, currentPath = "handoff") {
     }
     assertCredentialFree(entry, `${currentPath}.${key}`);
   }
+}
+
+function decodeBase64(value, label) {
+  if (
+    value.length === 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      value,
+    )
+  ) {
+    fail(`${label} must be canonical base64.`);
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length === 0 || decoded.toString("base64") !== value) {
+    fail(`${label} must be canonical base64.`);
+  }
+  return decoded;
 }
 
 function regularFile(value, label) {

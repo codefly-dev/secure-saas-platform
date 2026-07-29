@@ -114,6 +114,38 @@ test("mesh security defaults enforce mTLS and default-deny authorization", () =>
   assert.match(telemetry, /name: envoy/);
 });
 
+test("agent broker manifests gate the namespace and require audit metadata", () => {
+  const namespace = readFileSync(
+    "gitops/base/namespaces/agent-broker.yaml",
+    "utf8",
+  );
+  const networkPolicy = readFileSync(
+    "gitops/base/network-policies/default-deny-agent-broker.yaml",
+    "utf8",
+  );
+  const allowEgress = readFileSync(
+    "gitops/base/network-policies/allow-broker-to-egress.yaml",
+    "utf8",
+  );
+  const kyverno = readFileSync(
+    "gitops/base/kyverno/require-agent-audit.yaml",
+    "utf8",
+  );
+
+  assert.match(namespace, /pod-security.kubernetes.io\/enforce: restricted/);
+  assert.match(
+    networkPolicy,
+    /policyTypes:\s*\n\s*-\s*Ingress\s*\n\s*-\s*Egress/,
+  );
+  assert.match(allowEgress, /agent-egress/);
+  assert.match(kyverno, /security.deus.dev\/tenant-id/);
+  assert.match(kyverno, /security.deus.dev\/principal-id/);
+  assert.match(kyverno, /security.deus.dev\/turn-id/);
+  assert.match(kyverno, /security.deus.dev\/prompt-audit-sink/);
+  assert.match(kyverno, /security.deus.dev\/tool-audit-sink/);
+  assert.match(kyverno, /deny-broker-direct-model-call/);
+});
+
 test("execution workloads are fail-closed behind sandbox admission controls", () => {
   const runtimeClass = readFileSync(
     "gitops/base/runtime-classes/deus-microvm.yaml",
