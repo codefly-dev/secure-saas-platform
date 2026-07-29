@@ -12,7 +12,7 @@ spec:
     namespace: execution
   source:
     repoURL: https://github.com/codefly-dev/secure-saas-infra.git
-    targetRevision: 1b932460fb825745fdc0a6d8c23fbdf5d196f1bb
+    targetRevision: f8db9f296c4cd9f90c8078f3fbfe0a1cfccd9891
     path: gitops/overlays/dev/execution
   syncPolicy:
     automated:
