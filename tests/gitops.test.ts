@@ -513,7 +513,7 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
   }
   assert.deepEqual(
     [...revisions],
-    ["6f009581b7148b09d5341bbdc791200c78ba3e57"],
+    ["1d4c55a3bff945522c456179739aabcc67395539"],
   );
   assert.deepEqual([...chartVersions], ["10.2.1"]);
 });

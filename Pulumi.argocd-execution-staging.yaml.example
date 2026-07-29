@@ -17,7 +17,7 @@ config:
     chartVersion: "10.2.1"
     bootstrap:
       repository: https://github.com/codefly-dev/secure-saas-infra.git
-      revision: 6f009581b7148b09d5341bbdc791200c78ba3e57
+      revision: 1d4c55a3bff945522c456179739aabcc67395539
       entrypoint: gitops/bootstrap/argocd/overlays/staging/execution
     oidcIssuer: https://identity.mind.example
     oidcClientId: argocd-execution-staging
