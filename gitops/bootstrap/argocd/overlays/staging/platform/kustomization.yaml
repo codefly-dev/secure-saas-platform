@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../../base
+  - ../../../roles/platform
 patches:
   - path: platform-application-patch.yaml
     target:
@@ -15,12 +15,3 @@ patches:
     target:
       kind: Application
       name: database-infrastructure-handoff
-  - patch: |-
-      $patch: delete
-      apiVersion: argoproj.io/v1alpha1
-      kind: Application
-      metadata:
-        name: execution-cluster-baseline
-    target:
-      kind: Application
-      name: execution-cluster-baseline

@@ -3,8 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  existsSync,
-  mkdirSync,
+  cpSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -14,19 +13,27 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseAllDocuments, stringify } from "yaml";
+import { loadArgocdValues } from "./load-argocd-values.mjs";
 
 const K3S_IMAGE =
   "rancher/k3s@sha256:f17e43023cce2b9c613e198f26e73637bf734b5156d37c9f44819d97bac4d655";
-const CHART_VERSION = "10.2.1";
-const CHART_DIGEST =
-  "27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885";
-const CHART_REPOSITORY = "https://argoproj.github.io/argo-helm";
 const roles = ["platform", "execution"];
 const runId = `argocd-role-${process.pid}-${randomBytes(4).toString("hex")}`;
 const workingDirectory = mkdtempSync(path.join(tmpdir(), `${runId}-`));
 const sourceDirectory = path.join(workingDirectory, "source");
+const {
+  ARGOCD_CHART_DIGEST: CHART_DIGEST,
+  ARGOCD_CHART_REPOSITORY: CHART_REPOSITORY,
+  ARGOCD_CHART_VERSION: CHART_VERSION,
+  argocdHelmValues,
+  databaseArgocdHelmValues,
+} = loadArgocdValues(workingDirectory);
 const chart = path.join(workingDirectory, `argo-cd-${CHART_VERSION}.tgz`);
 const clusters = new Map();
+const inventories = new Map(
+  roles.map((role) => [role, renderRoleInventory(role)]),
+);
+const qualificationResources = roles.flatMap((role) => inventories.get(role));
 let gitDaemon;
 let failure;
 let cleaned = false;
@@ -70,11 +77,12 @@ try {
   const repository = `git://host.docker.internal:${port}/source`;
 
   for (const role of roles) {
-    installArgocd(clusters.get(role));
+    installQualificationCrds(clusters.get(role), qualificationResources);
+    installArgocd(clusters.get(role), role);
     reconcileRole(clusters.get(role), role, repository, revision);
   }
   for (const role of roles) {
-    assertRoleIsolation(clusters.get(role), role);
+    assertRoleIsolation(clusters.get(role), role, inventories);
   }
 } catch (error) {
   failure = error;
@@ -131,33 +139,7 @@ function validatePrerequisites() {
 }
 
 function createDisposableRepository() {
-  for (const role of roles) {
-    const directory = path.join(
-      sourceDirectory,
-      "gitops",
-      "overlays",
-      "dev",
-      role,
-    );
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(
-      path.join(directory, "kustomization.yaml"),
-      stringify({
-        apiVersion: "kustomize.config.k8s.io/v1beta1",
-        kind: "Kustomization",
-        resources: ["role-proof.configmap.yaml"],
-      }),
-    );
-    writeFileSync(
-      path.join(directory, "role-proof.configmap.yaml"),
-      stringify({
-        apiVersion: "v1",
-        kind: "ConfigMap",
-        metadata: { name: "role-proof", namespace: role },
-        data: { role },
-      }),
-    );
-  }
+  cpSync("gitops", path.join(sourceDirectory, "gitops"), { recursive: true });
   run("git", ["init", "-q"], undefined, sourceDirectory);
   run("git", ["add", "."], undefined, sourceDirectory);
   run(
@@ -167,6 +149,8 @@ function createDisposableRepository() {
       "user.name=Argo CD qualification",
       "-c",
       "user.email=argocd-qualification@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
       "commit",
       "-qm",
       "role fixtures",
@@ -209,6 +193,8 @@ function startCluster(role) {
     name,
     "--label",
     "security.deus.dev/owner=argocd-role-qualification",
+    "--add-host",
+    "host.docker.internal:host-gateway",
     "--tmpfs",
     "/run",
     "--tmpfs",
@@ -262,134 +248,22 @@ function startCluster(role) {
   return { name, kubeconfig };
 }
 
-function installArgocd(cluster) {
-  const values = path.join(workingDirectory, "argocd-values.yaml");
-  if (!existsSync(values)) {
-    writeFileSync(
-      values,
-      stringify({
-        fullnameOverride: "argocd",
-        crds: { install: true },
-        configs: {
-          params: {
-            "server.insecure": false,
-            "server.repo.server.timeout.seconds": 180,
-          },
-          cm: {
-            "admin.enabled": false,
-            "exec.enabled": false,
-            "resource.respectRBAC": "strict",
-            "users.anonymous.enabled": false,
-          },
-        },
-        controller: {
-          replicas: 1,
-          clusterRoleRules: {
-            enabled: true,
-            rules: [
-              {
-                apiGroups: [""],
-                resources: [
-                  "configmaps",
-                  "endpoints",
-                  "events",
-                  "limitranges",
-                  "namespaces",
-                  "persistentvolumeclaims",
-                  "resourcequotas",
-                  "secrets",
-                  "serviceaccounts",
-                  "services",
-                ],
-                verbs: [
-                  "get",
-                  "list",
-                  "watch",
-                  "create",
-                  "update",
-                  "patch",
-                  "delete",
-                ],
-              },
-              {
-                apiGroups: [
-                  "admissionregistration.k8s.io",
-                  "apiextensions.k8s.io",
-                  "apiregistration.k8s.io",
-                  "apps",
-                  "argoproj.io",
-                  "autoscaling",
-                  "batch",
-                  "gateway.networking.k8s.io",
-                  "monitoring.coreos.com",
-                  "networking.k8s.io",
-                  "node.k8s.io",
-                  "policy",
-                  "rbac.authorization.k8s.io",
-                  "security.istio.io",
-                  "tailscale.com",
-                  "telemetry.istio.io",
-                ],
-                resources: [
-                  "applications",
-                  "applicationsets",
-                  "appprojects",
-                  "authorizationpolicies",
-                  "clusterroles",
-                  "clusterrolebindings",
-                  "cronjobs",
-                  "customresourcedefinitions",
-                  "daemonsets",
-                  "deployments",
-                  "gateways",
-                  "horizontalpodautoscalers",
-                  "httproutes",
-                  "jobs",
-                  "mutatingwebhookconfigurations",
-                  "networkpolicies",
-                  "peerauthentications",
-                  "poddisruptionbudgets",
-                  "podmonitors",
-                  "prometheusrules",
-                  "roles",
-                  "rolebindings",
-                  "runtimeclasses",
-                  "servicemonitors",
-                  "statefulsets",
-                  "telemetries",
-                  "validatingwebhookconfigurations",
-                ],
-                verbs: [
-                  "get",
-                  "list",
-                  "watch",
-                  "create",
-                  "update",
-                  "patch",
-                  "delete",
-                ],
-              },
-              {
-                apiGroups: ["authorization.k8s.io"],
-                resources: ["selfsubjectaccessreviews"],
-                verbs: ["create"],
-              },
-            ],
-          },
-        },
-        server: {
-          replicas: 1,
-          service: { type: "ClusterIP" },
-          extraArgs: ["--insecure=false"],
-        },
-        repoServer: { replicas: 1 },
-        applicationSet: { enabled: false },
-        notifications: { enabled: false },
-        dex: { enabled: false },
+function installArgocd(cluster, role) {
+  const values = path.join(workingDirectory, `argocd-${role}-values.yaml`);
+  writeFileSync(
+    values,
+    stringify(
+      argocdHelmValues({
+        clusterRole: role,
+        argocdHostname: `argocd-${role}.qualification.invalid`,
+        oidcIssuer: "https://identity.qualification.invalid",
+        oidcClientId: `argocd-${role}`,
+        oidcClientSecretRef: "$oidc.organization.clientSecret",
+        oidcAdminGroup: "deus:infra:admins",
       }),
-      { mode: 0o600 },
-    );
-  }
+    ),
+    { mode: 0o600 },
+  );
   run("helm", [
     "--kubeconfig",
     cluster.kubeconfig,
@@ -405,6 +279,30 @@ function installArgocd(cluster) {
     "--timeout",
     "8m",
   ]);
+  if (role === "platform") {
+    const databaseValues = path.join(
+      workingDirectory,
+      "argocd-database-values.yaml",
+    );
+    writeFileSync(databaseValues, stringify(databaseArgocdHelmValues()), {
+      mode: 0o600,
+    });
+    run("helm", [
+      "--kubeconfig",
+      cluster.kubeconfig,
+      "install",
+      "argocd-database",
+      chart,
+      "--namespace",
+      "argocd-database",
+      "--create-namespace",
+      "--values",
+      databaseValues,
+      "--wait",
+      "--timeout",
+      "8m",
+    ]);
+  }
 }
 
 function reconcileRole(cluster, role, repository, revision) {
@@ -430,19 +328,15 @@ function reconcileRole(cluster, role, repository, revision) {
   const application = structuredClone(baselines[0]);
   application.spec.source.repoURL = repository;
   application.spec.source.targetRevision = revision;
-  const project = {
-    apiVersion: "argoproj.io/v1alpha1",
-    kind: "AppProject",
-    metadata: { name: "bootstrap", namespace: "argocd" },
-    spec: {
-      sourceRepos: [repository],
-      destinations: [
-        { server: "https://kubernetes.default.svc", namespace: role },
-      ],
-      clusterResourceWhitelist: [{ group: "", kind: "Namespace" }],
-      namespaceResourceWhitelist: [{ group: "", kind: "ConfigMap" }],
-    },
-  };
+  const project = structuredClone(
+    rendered.find(
+      (document) =>
+        document.kind === "AppProject" &&
+        document.metadata?.name === "bootstrap",
+    ),
+  );
+  if (!project) throw new Error(`${role} entrypoint has no bootstrap project.`);
+  project.spec.sourceRepos = [repository];
   kubectl(
     cluster,
     ["apply", "-f", "-"],
@@ -466,32 +360,31 @@ function reconcileRole(cluster, role, repository, revision) {
   });
 }
 
-function assertRoleIsolation(cluster, role) {
-  const marker = JSON.parse(
-    kubectl(cluster, [
-      "get",
-      "configmap",
-      "role-proof",
-      "-n",
-      role,
-      "-o",
-      "json",
-    ]).stdout,
-  );
-  if (marker.data?.role !== role) {
-    throw new Error(`${role} cluster reconciled the wrong role marker.`);
+function assertRoleIsolation(cluster, role, roleInventories) {
+  const owned = roleInventories.get(role);
+  const ownedOutput = kubectl(
+    cluster,
+    ["get", "-f", "-", "-o", "name"],
+    stringifyResourceReferences(owned),
+  )
+    .stdout.trim()
+    .split("\n")
+    .filter(Boolean);
+  if (ownedOutput.length !== owned.length) {
+    throw new Error(
+      `${role} cluster did not reconcile its exact baseline inventory.`,
+    );
   }
   const otherRole = opposite(role);
-  const forbiddenMarker = kubectl(cluster, [
-    "get",
-    "configmap",
-    "role-proof",
-    "-n",
-    otherRole,
-    "--ignore-not-found",
-    "-o",
-    "name",
-  ]).stdout.trim();
+  const ownedKeys = new Set(owned.map(resourceIdentity));
+  const forbidden = roleInventories
+    .get(otherRole)
+    .filter((resource) => !ownedKeys.has(resourceIdentity(resource)));
+  const forbiddenResources = kubectl(
+    cluster,
+    ["get", "-f", "-", "--ignore-not-found", "-o", "name"],
+    stringifyResourceReferences(forbidden),
+  ).stdout.trim();
   const forbiddenApplication = kubectl(cluster, [
     "get",
     "application",
@@ -502,9 +395,118 @@ function assertRoleIsolation(cluster, role) {
     "-o",
     "name",
   ]).stdout.trim();
-  if (forbiddenMarker || forbiddenApplication) {
+  const databaseNamespace = kubectl(cluster, [
+    "get",
+    "namespace",
+    "argocd-database",
+    "--ignore-not-found",
+    "-o",
+    "name",
+  ]).stdout.trim();
+  if (
+    forbiddenResources ||
+    forbiddenApplication ||
+    (role === "platform") !== Boolean(databaseNamespace)
+  ) {
     throw new Error(`${otherRole} ownership crossed into the ${role} cluster.`);
   }
+}
+
+function renderRoleInventory(role) {
+  return parseAllDocuments(
+    run("kubectl", ["kustomize", `gitops/overlays/dev/${role}`]).stdout,
+  )
+    .map((document) => document.toJSON())
+    .filter(Boolean);
+}
+
+function installQualificationCrds(cluster, resources) {
+  const definitions = [
+    ["kyverno.io", "v1", "ClusterPolicy", "clusterpolicies", "Cluster"],
+    [
+      "security.istio.io",
+      "v1",
+      "AuthorizationPolicy",
+      "authorizationpolicies",
+      "Namespaced",
+    ],
+    [
+      "security.istio.io",
+      "v1",
+      "PeerAuthentication",
+      "peerauthentications",
+      "Namespaced",
+    ],
+    ["telemetry.istio.io", "v1", "Telemetry", "telemetries", "Namespaced"],
+    ["tailscale.com", "v1alpha1", "Connector", "connectors", "Namespaced"],
+  ].filter(([group, version, kind]) =>
+    resources.some(
+      (resource) =>
+        resource.apiVersion === `${group}/${version}` && resource.kind === kind,
+    ),
+  );
+  if (definitions.length === 0) return;
+  const manifests = definitions.map(
+    ([group, version, kind, plural, scope]) => ({
+      apiVersion: "apiextensions.k8s.io/v1",
+      kind: "CustomResourceDefinition",
+      metadata: { name: `${plural}.${group}` },
+      spec: {
+        group,
+        names: { kind, plural, singular: plural.replace(/s$/, "") },
+        scope,
+        versions: [
+          {
+            name: version,
+            served: true,
+            storage: true,
+            schema: {
+              openAPIV3Schema: {
+                type: "object",
+                "x-kubernetes-preserve-unknown-fields": true,
+              },
+            },
+          },
+        ],
+      },
+    }),
+  );
+  kubectl(cluster, ["apply", "-f", "-"], joinDocuments(manifests));
+  kubectl(cluster, [
+    "wait",
+    "--for=condition=Established",
+    "customresourcedefinition",
+    "--all",
+    "--timeout=60s",
+  ]);
+}
+
+function stringifyResourceReferences(resources) {
+  return joinDocuments(
+    resources.map((resource) => ({
+      apiVersion: resource.apiVersion,
+      kind: resource.kind,
+      metadata: {
+        name: resource.metadata.name,
+        ...(resource.metadata.namespace
+          ? { namespace: resource.metadata.namespace }
+          : {}),
+      },
+    })),
+  );
+}
+
+function joinDocuments(documents) {
+  return documents.map((document) => stringify(document)).join("---\n");
+}
+
+function resourceIdentity(resource) {
+  return [
+    resource.apiVersion,
+    resource.kind,
+    resource.metadata?.namespace ?? "<cluster>",
+    resource.metadata?.name,
+  ].join("|");
 }
 
 function kubectl(cluster, args, input) {

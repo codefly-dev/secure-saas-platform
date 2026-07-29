@@ -15,9 +15,11 @@
     "validate:g0": "npm run format:check && node scripts/validate-management-seed-syntax.mjs && npm run launcher:vet && npm run launcher:test && npm run launcher:build && npm run check && npm run build && npm run policy:build && npm run support:build && npm run verify:build && npm run validate:contracts && npm run validate:management-seed-policies",
     "validate:g1": "npm run test:iac",
     "validate:local": "npm run validate:g0 && npm run validate:g1",
-    "validate:source": "npm ci --ignore-scripts && npm run security:secrets && npm run security:go-vuln && npm run validate:local && npm run security:audit && npm run sbom -- --output artifacts/secure-saas-infra.spdx.json",
+    "validate:source": "npm ci --ignore-scripts && npm run security:secrets && npm run security:go-vuln && npm run validate:local && npm run platform:validate:source && npm run security:audit && npm run sbom -- --output artifacts/secure-saas-infra.spdx.json",
     "validate": "npm run validate:g0 && npm run validate:g1",
     "platform:validate:gitops": "node scripts/validate-gitops.mjs",
+    "platform:test": "node -e \"require('node:fs').rmSync('dist-platform-test',{recursive:true,force:true})\" && tsc -p tsconfig.platform-test.json && node --test dist-platform-test/tests/argocd.test.js dist-platform-test/tests/gitops.test.js",
+    "platform:validate:source": "npm run platform:test && npm run platform:validate:gitops && npm run platform:qualify:argocd-chart",
     "platform:qualify:argocd-chart": "node scripts/qualify-argocd-chart.mjs",
     "platform:qualify:argocd-two-cluster": "node scripts/validate-argocd-cluster-roles.mjs",
     "validate:aws-account": "node scripts/bootstrap-doctor.mjs --check-aws-account-audit",
@@ -46,6 +48,7 @@
   },
   "dependencies": {
     "@pulumi/aws": "7.27.0",
+    "@pulumi/kubernetes": "4.33.0",
     "@pulumi/pulumi": "3.253.0"
   },
   "devDependencies": {

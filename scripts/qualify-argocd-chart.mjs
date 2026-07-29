@@ -6,14 +6,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseAllDocuments, stringify } from "yaml";
+import { loadArgocdValues } from "./load-argocd-values.mjs";
 
-const CHART_VERSION = "10.2.1";
-const CHART_DIGEST =
-  "27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885";
-const CHART_REPOSITORY = "https://argoproj.github.io/argo-helm";
 const workingDirectory = mkdtempSync(
   path.join(tmpdir(), "argocd-chart-qualification-"),
 );
+const {
+  ARGOCD_CHART_DIGEST: CHART_DIGEST,
+  ARGOCD_CHART_REPOSITORY: CHART_REPOSITORY,
+  ARGOCD_CHART_VERSION: CHART_VERSION,
+  argocdHelmValues,
+  databaseArgocdHelmValues,
+} = loadArgocdValues(workingDirectory);
 
 try {
   const chart = path.join(workingDirectory, `argo-cd-${CHART_VERSION}.tgz`);
@@ -31,76 +35,25 @@ try {
     throw new Error("Argo CD chart digest does not match the reviewed pin.");
   }
 
+  const controllerConfig = (clusterRole) => ({
+    clusterRole,
+    argocdHostname: `argocd-${clusterRole}.qualification.invalid`,
+    oidcIssuer: "https://identity.qualification.invalid",
+    oidcClientId: `argocd-${clusterRole}`,
+    oidcClientSecretRef: "$oidc.organization.clientSecret",
+    oidcAdminGroup: "deus:infra:admins",
+  });
   for (const profile of [
-    {
-      name: "argocd",
+    ...["platform", "execution"].map((clusterRole) => ({
+      name: `argocd-${clusterRole}`,
       namespace: "argocd",
-      values: {
-        fullnameOverride: "argocd",
-        crds: { install: true },
-        configs: {
-          params: {
-            "server.insecure": false,
-            "server.repo.server.timeout.seconds": 180,
-          },
-          cm: {
-            "admin.enabled": false,
-            "exec.enabled": false,
-            "resource.respectRBAC": "strict",
-            "users.anonymous.enabled": false,
-          },
-        },
-        controller: {
-          replicas: 1,
-          clusterRoleRules: {
-            enabled: true,
-            rules: [
-              {
-                apiGroups: [""],
-                resources: ["configmaps", "namespaces"],
-                verbs: ["get", "list", "watch"],
-              },
-            ],
-          },
-        },
-        server: {
-          replicas: 1,
-          service: { type: "ClusterIP" },
-          extraArgs: ["--insecure=false"],
-        },
-        repoServer: { replicas: 1 },
-        applicationSet: { replicas: 1 },
-        notifications: { enabled: false },
-        dex: { enabled: false },
-      },
-    },
+      values: argocdHelmValues(controllerConfig(clusterRole)),
+      clusterRole,
+    })),
     {
       name: "argocd-database",
       namespace: "argocd-database",
-      values: {
-        fullnameOverride: "argocd-database",
-        crds: { install: false },
-        configs: {
-          cm: {
-            "admin.enabled": false,
-            "exec.enabled": false,
-            "resource.respectRBAC": "strict",
-            "users.anonymous.enabled": false,
-          },
-        },
-        controller: {
-          replicas: 1,
-          serviceAccount: {
-            create: true,
-            name: "database-infrastructure-application-controller",
-          },
-        },
-        server: { replicas: 1, service: { type: "ClusterIP" } },
-        repoServer: { replicas: 1 },
-        applicationSet: { enabled: false },
-        notifications: { enabled: false },
-        dex: { enabled: false },
-      },
+      values: databaseArgocdHelmValues(),
     },
   ]) {
     const valuesPath = path.join(workingDirectory, `${profile.name}.yaml`);
@@ -143,6 +96,40 @@ try {
       )
     ) {
       throw new Error(`${profile.name} rendered an incomplete chart.`);
+    }
+    if (
+      documents.some((document) => document.kind === "ServiceMonitor") ||
+      profile.values.configs.cm["resource.respectRBAC"] !== "strict"
+    ) {
+      throw new Error(
+        `${profile.name} is not installable before monitoring CRDs or does not enforce strict resource RBAC.`,
+      );
+    }
+    if (profile.clusterRole) {
+      const rules = profile.values.controller.clusterRoleRules.rules;
+      const serializedRules = JSON.stringify(rules);
+      if (
+        !serializedRules.includes("validatingadmissionpolicies") ||
+        !serializedRules.includes("clusterpolicies") ||
+        (profile.clusterRole === "platform") !==
+          serializedRules.includes("connectors")
+      ) {
+        throw new Error(
+          `${profile.name} does not carry its production role-specific controller rules.`,
+        );
+      }
+    } else {
+      const serializedRules = JSON.stringify(
+        profile.values.controller.clusterRoleRules.rules,
+      );
+      if (
+        !serializedRules.includes("applicationnetworkpolicies") ||
+        serializedRules.includes('"delete"')
+      ) {
+        throw new Error(
+          "argocd-database does not carry its production infrastructure controller rules.",
+        );
+      }
     }
   }
 

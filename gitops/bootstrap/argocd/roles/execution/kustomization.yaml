@@ -1,0 +1,150 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: platform-only
+    target:
+      kind: Application
+      name: (argo-rollouts|cert-manager|database-infrastructure-handoff|external-dns|gateway-api-crds|istio-ingress-gateway|platform-cluster-baseline|tailscale-operator|vault|vault-secrets-operator)
+  - patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: database-infrastructure
+    target:
+      kind: AppProject
+      name: database-infrastructure
+  - patch: |-
+      - op: replace
+        path: /spec/destinations
+        value:
+          - server: https://kubernetes.default.svc
+            namespace: execution
+          - server: https://kubernetes.default.svc
+            namespace: istio-system
+          - server: https://kubernetes.default.svc
+            namespace: kube-system
+          - server: https://kubernetes.default.svc
+            namespace: security
+      - op: replace
+        path: /spec/roles/0/description
+        value: Sync only the execution cluster baseline Application.
+      - op: replace
+        path: /spec/roles/0/policies
+        value:
+          - p, proj:bootstrap:bootstrap-sync, applications, get, bootstrap/execution-cluster-baseline, allow
+          - p, proj:bootstrap:bootstrap-sync, applications, sync, bootstrap/execution-cluster-baseline, allow
+      - op: replace
+        path: /spec/clusterResourceWhitelist
+        value:
+          - group: ""
+            kind: Namespace
+          - group: kyverno.io
+            kind: ClusterPolicy
+          - group: admissionregistration.k8s.io
+            kind: ValidatingAdmissionPolicy
+          - group: admissionregistration.k8s.io
+            kind: ValidatingAdmissionPolicyBinding
+          - group: node.k8s.io
+            kind: RuntimeClass
+      - op: replace
+        path: /spec/namespaceResourceWhitelist
+        value:
+          - group: ""
+            kind: ConfigMap
+          - group: ""
+            kind: ServiceAccount
+          - group: ""
+            kind: LimitRange
+          - group: ""
+            kind: ResourceQuota
+          - group: networking.k8s.io
+            kind: NetworkPolicy
+          - group: security.istio.io
+            kind: AuthorizationPolicy
+          - group: security.istio.io
+            kind: PeerAuthentication
+          - group: telemetry.istio.io
+            kind: Telemetry
+    target:
+      kind: AppProject
+      name: bootstrap
+  - patch: |-
+      - op: replace
+        path: /spec/sourceRepos
+        value:
+          - https://istio-release.storage.googleapis.com/charts
+          - https://kubernetes-sigs.github.io/metrics-server/
+          - https://prometheus-community.github.io/helm-charts
+      - op: replace
+        path: /spec/destinations
+        value:
+          - server: https://kubernetes.default.svc
+            namespace: istio-system
+          - server: https://kubernetes.default.svc
+            namespace: metrics-server
+          - server: https://kubernetes.default.svc
+            namespace: observability
+      - op: replace
+        path: /spec/roles/0/description
+        value: Read and sync only execution-cluster platform operator Applications.
+      - op: replace
+        path: /spec/roles/0/policies
+        value:
+          - p, proj:platform-operators:operator-sync, applications, get, platform-operators/istio-base, allow
+          - p, proj:platform-operators:operator-sync, applications, sync, platform-operators/istio-base, allow
+          - p, proj:platform-operators:operator-sync, applications, get, platform-operators/istio-cni, allow
+          - p, proj:platform-operators:operator-sync, applications, sync, platform-operators/istio-cni, allow
+          - p, proj:platform-operators:operator-sync, applications, get, platform-operators/istio-ztunnel, allow
+          - p, proj:platform-operators:operator-sync, applications, sync, platform-operators/istio-ztunnel, allow
+          - p, proj:platform-operators:operator-sync, applications, get, platform-operators/istiod, allow
+          - p, proj:platform-operators:operator-sync, applications, sync, platform-operators/istiod, allow
+          - p, proj:platform-operators:operator-sync, applications, get, platform-operators/kube-prometheus-stack, allow
+          - p, proj:platform-operators:operator-sync, applications, sync, platform-operators/kube-prometheus-stack, allow
+          - p, proj:platform-operators:operator-sync, applications, get, platform-operators/metrics-server, allow
+          - p, proj:platform-operators:operator-sync, applications, sync, platform-operators/metrics-server, allow
+    target:
+      kind: AppProject
+      name: platform-operators
+  - patch: |-
+      - op: replace
+        path: /spec/sourceRepos
+        value:
+          - https://falcosecurity.github.io/charts
+          - https://kyverno.github.io/kyverno/
+      - op: replace
+        path: /spec/destinations
+        value:
+          - server: https://kubernetes.default.svc
+            namespace: falco
+          - server: https://kubernetes.default.svc
+            namespace: kyverno
+      - op: replace
+        path: /spec/roles/0/description
+        value: Read and sync only execution-cluster security Applications.
+      - op: replace
+        path: /spec/roles/0/policies
+        value:
+          - p, proj:security:security-sync, applications, get, security/falco, allow
+          - p, proj:security:security-sync, applications, sync, security/falco, allow
+          - p, proj:security:security-sync, applications, get, security/kyverno, allow
+          - p, proj:security:security-sync, applications, sync, security/kyverno, allow
+    target:
+      kind: AppProject
+      name: security
+  - patch: |-
+      - op: replace
+        path: /spec/destinations
+        value:
+          - server: https://kubernetes.default.svc
+            namespace: execution
+    target:
+      kind: AppProject
+      name: tenant-delivery

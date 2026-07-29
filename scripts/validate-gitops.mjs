@@ -111,6 +111,45 @@ function validateArgoBoundary(documents, label, identity) {
       fail(label, `default AppProject ${field} must be an explicit empty list`);
     }
   }
+  const bootstrap = byName.get("bootstrap");
+  const expectedBootstrapDestinations =
+    identity.clusterRole === "platform"
+      ? [
+          "agent-broker",
+          "agent-egress",
+          "istio-system",
+          "kube-system",
+          "platform",
+          "security",
+          "tailscale",
+          "workloads",
+        ]
+      : ["execution", "istio-system", "kube-system", "security"];
+  assertExactSet(
+    new Set(
+      (bootstrap?.spec?.destinations ?? []).map(
+        (destination) => destination.namespace,
+      ),
+    ),
+    expectedBootstrapDestinations,
+    label,
+    "bootstrap AppProject destinations",
+  );
+  const expectedBaseline = `${identity.clusterRole}-cluster-baseline`;
+  const bootstrapPolicies = (bootstrap?.spec?.roles ?? []).flatMap(
+    (role) => role.policies ?? [],
+  );
+  if (
+    bootstrapPolicies.length !== 2 ||
+    bootstrapPolicies.some(
+      (policy) => !policy.includes(`bootstrap/${expectedBaseline}`),
+    )
+  ) {
+    fail(
+      label,
+      `bootstrap AppProject must authorize only '${expectedBaseline}'`,
+    );
+  }
   for (const project of projects.filter(
     (candidate) => candidate.metadata.name !== "default",
   )) {
@@ -308,6 +347,56 @@ function validateArgoBoundary(documents, label, identity) {
       fail(label, `${application.metadata.name} has an unsafe target revision`);
     }
   }
+  for (const projectName of ["platform-operators", "security"]) {
+    const project = byName.get(projectName);
+    const ownedApplications = applications.filter(
+      (application) => application.spec?.project === projectName,
+    );
+    assertExactSet(
+      new Set(project.spec.sourceRepos),
+      new Set(
+        ownedApplications.map((application) => application.spec.source.repoURL),
+      ),
+      label,
+      `${projectName} role-specific source repositories`,
+    );
+    assertExactSet(
+      new Set(
+        project.spec.destinations.map((destination) => destination.namespace),
+      ),
+      new Set(
+        ownedApplications.map(
+          (application) => application.spec.destination.namespace,
+        ),
+      ),
+      label,
+      `${projectName} role-specific destinations`,
+    );
+    const role = project.spec.roles[0];
+    assertExactSet(
+      new Set(role.policies),
+      new Set(
+        ownedApplications.flatMap((application) =>
+          ["get", "sync"].map(
+            (action) =>
+              `p, proj:${projectName}:${role.name}, applications, ${action}, ${projectName}/${application.metadata.name}, allow`,
+          ),
+        ),
+      ),
+      label,
+      `${projectName} role-specific policies`,
+    );
+  }
+  assertExactSet(
+    new Set(
+      byName
+        .get("tenant-delivery")
+        .spec.destinations.map((destination) => destination.namespace),
+    ),
+    [identity.clusterRole === "platform" ? "workloads" : "execution"],
+    label,
+    "tenant-delivery role-specific destinations",
+  );
 }
 
 function bootstrapIdentity(label) {
@@ -578,14 +667,52 @@ function assertExactSet(actual, expected, label, subject) {
 }
 
 function validateRestrictedNamespaceEnrollment(documents, label) {
-  const expected = [
-    "agent-broker",
-    "agent-egress",
-    "execution",
-    "platform",
-    "security",
-    "workloads",
-  ];
+  const match =
+    /overlays\/(?:dev|staging|production)\/(platform|execution)$/.exec(label);
+  if (!match) fail(label, "is not an explicit environment/role baseline");
+  const clusterRole = match[1];
+  const expected =
+    clusterRole === "platform"
+      ? ["agent-broker", "agent-egress", "platform", "security", "workloads"]
+      : ["execution", "security"];
+  const expectedNamespaces =
+    clusterRole === "platform"
+      ? [
+          "agent-broker",
+          "agent-egress",
+          "argo-rollouts",
+          "cert-manager",
+          "external-dns",
+          "falco",
+          "istio-ingress",
+          "istio-system",
+          "metrics-server",
+          "observability",
+          "platform",
+          "security",
+          "tailscale",
+          "vault",
+          "vault-secrets-operator",
+          "workloads",
+        ]
+      : [
+          "execution",
+          "falco",
+          "istio-system",
+          "metrics-server",
+          "observability",
+          "security",
+        ];
+  assertExactSet(
+    new Set(
+      documents
+        .filter((document) => document.kind === "Namespace")
+        .map((document) => document.metadata.name),
+    ),
+    expectedNamespaces,
+    label,
+    `${clusterRole} namespace ownership`,
+  );
   const restricted = documents
     .filter(
       (document) =>
@@ -659,6 +786,8 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
         )
         .map((destination) => destination.namespace),
     );
+    const renderedClusterKinds = new Set();
+    const renderedNamespaceKinds = new Set();
     for (const resource of resources) {
       const apiGroup = String(resource.apiVersion ?? "").split("/")[0];
       const group = String(resource.apiVersion).includes("/") ? apiGroup : "";
@@ -666,6 +795,10 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
       const scoped = resource.metadata?.namespace
         ? namespaceKinds
         : clusterKinds;
+      (resource.metadata?.namespace
+        ? renderedNamespaceKinds
+        : renderedClusterKinds
+      ).add(key);
       if (!scoped.has(key)) {
         fail(
           sourcePath,
@@ -682,6 +815,18 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
         );
       }
     }
+    assertExactSet(
+      clusterKinds,
+      renderedClusterKinds,
+      sourcePath,
+      `${application.spec.project} cluster resource authority`,
+    );
+    assertExactSet(
+      namespaceKinds,
+      renderedNamespaceKinds,
+      sourcePath,
+      `${application.spec.project} namespace resource authority`,
+    );
     if (sourcePath.endsWith("/platform")) {
       validateDatabaseControllerPolicy(resources, sourcePath);
     }

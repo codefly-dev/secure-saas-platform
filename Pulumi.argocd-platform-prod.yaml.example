@@ -15,12 +15,11 @@ config:
     clusterAccessRoleArn: arn:aws:iam::<set-platform-prod-account-id-after-organization-creation>:role/InfrastructureApplyProd-Workload
     argocdHostname: argocd-platform-prod.mind.example
     chartVersion: "10.2.1"
-    bootstrapRepository: https://github.com/codefly-dev/secure-saas-infra.git
-    bootstrapRevision: 1b932460fb825745fdc0a6d8c23fbdf5d196f1bb
+    bootstrap:
+      repository: https://github.com/codefly-dev/secure-saas-infra.git
+      revision: 1b932460fb825745fdc0a6d8c23fbdf5d196f1bb
+      entrypoint: gitops/bootstrap/argocd/overlays/production/platform
     oidcIssuer: https://identity.mind.example
     oidcClientId: argocd-platform-prod
     oidcClientSecretRef: $oidc.organization.clientSecret
     oidcAdminGroup: deus:infra:admins
-    # Bootstrap directory relative to the Pulumi run cwd. The Argo CD
-    # stack must run from the repo root so this resolves to gitops/...
-    bootstrapDirectory: gitops/bootstrap/argocd/overlays/production/platform

@@ -313,6 +313,150 @@ test("Argo CD bootstrap entrypoints render one immutable cluster role", () => {
   }
 });
 
+test("cluster baselines own only namespaces and bootstrap authority assigned to their role", () => {
+  const expectations = {
+    platform: {
+      namespaces: [
+        "agent-broker",
+        "agent-egress",
+        "argo-rollouts",
+        "cert-manager",
+        "external-dns",
+        "falco",
+        "istio-ingress",
+        "istio-system",
+        "metrics-server",
+        "observability",
+        "platform",
+        "security",
+        "tailscale",
+        "vault",
+        "vault-secrets-operator",
+        "workloads",
+      ],
+      destinations: [
+        "agent-broker",
+        "agent-egress",
+        "istio-system",
+        "kube-system",
+        "platform",
+        "security",
+        "tailscale",
+        "workloads",
+      ],
+    },
+    execution: {
+      namespaces: [
+        "execution",
+        "falco",
+        "istio-system",
+        "metrics-server",
+        "observability",
+        "security",
+      ],
+      destinations: ["execution", "istio-system", "kube-system", "security"],
+    },
+  } as const;
+
+  for (const clusterRole of ["platform", "execution"] as const) {
+    const baseline = renderKustomization(`gitops/overlays/dev/${clusterRole}`);
+    assert.deepEqual(
+      baseline
+        .filter((document) => document.kind === "Namespace")
+        .map((document) => document.metadata.name)
+        .sort(),
+      [...expectations[clusterRole].namespaces].sort(),
+    );
+
+    const bootstrap = renderKustomization(
+      `gitops/bootstrap/argocd/overlays/dev/${clusterRole}`,
+    );
+    const project = bootstrap.find(
+      (document) =>
+        document.kind === "AppProject" &&
+        document.metadata?.name === "bootstrap",
+    );
+    assert.deepEqual(
+      project.spec.destinations
+        .map((destination: any) => destination.namespace)
+        .sort(),
+      [...expectations[clusterRole].destinations].sort(),
+    );
+    const policies = project.spec.roles.flatMap(
+      (role: any) => role.policies ?? [],
+    );
+    assert.ok(
+      policies.every((policy: string) =>
+        policy.includes(`bootstrap/${clusterRole}-cluster-baseline`),
+      ),
+    );
+    assert.doesNotMatch(
+      JSON.stringify(project),
+      new RegExp(
+        `bootstrap/${oppositeClusterRole(clusterRole)}-cluster-baseline`,
+      ),
+    );
+
+    for (const projectName of ["platform-operators", "security"]) {
+      const scopedProject = bootstrap.find(
+        (document) =>
+          document.kind === "AppProject" &&
+          document.metadata?.name === projectName,
+      );
+      const scopedApplications = bootstrap.filter(
+        (document) =>
+          document.kind === "Application" &&
+          document.spec?.project === projectName,
+      );
+      assert.deepEqual(
+        [...new Set(scopedProject.spec.sourceRepos)].sort(),
+        [
+          ...new Set(
+            scopedApplications.map(
+              (application) => application.spec.source.repoURL,
+            ),
+          ),
+        ].sort(),
+      );
+      assert.deepEqual(
+        scopedProject.spec.destinations
+          .map((destination: any) => destination.namespace)
+          .sort(),
+        [
+          ...new Set(
+            scopedApplications.map(
+              (application) => application.spec.destination.namespace,
+            ),
+          ),
+        ].sort(),
+      );
+      const authorizedApplications = scopedProject.spec.roles.flatMap(
+        (role: any) =>
+          (role.policies ?? []).map(
+            (policy: string) => policy.split(",")[4].trim().split("/")[1],
+          ),
+      );
+      assert.deepEqual(
+        [...new Set(authorizedApplications)].sort(),
+        scopedApplications
+          .map((application) => application.metadata.name)
+          .sort(),
+      );
+    }
+    const tenantDelivery = bootstrap.find(
+      (document) =>
+        document.kind === "AppProject" &&
+        document.metadata?.name === "tenant-delivery",
+    );
+    assert.deepEqual(
+      tenantDelivery.spec.destinations.map(
+        (destination: any) => destination.namespace,
+      ),
+      [clusterRole === "platform" ? "workloads" : "execution"],
+    );
+  }
+});
+
 test("Pulumi Argo CD handoffs align the qualified chart and immutable role entrypoints", () => {
   const revisions = new Set<string>();
   const chartVersions = new Set<string>();
@@ -328,16 +472,16 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
       assert.equal(config.clusterRole, clusterRole);
       assert.equal(config.clusterName, `${clusterRole}-${environment}`);
       assert.equal(
-        config.bootstrapRepository,
+        config.bootstrap.repository,
         "https://github.com/codefly-dev/secure-saas-infra.git",
       );
-      assert.match(config.bootstrapRevision, /^[a-f0-9]{40}$/);
+      assert.match(config.bootstrap.revision, /^[a-f0-9]{40}$/);
       assert.equal(
-        config.bootstrapDirectory,
+        config.bootstrap.entrypoint,
         `gitops/bootstrap/argocd/overlays/${overlayEnvironment}/${clusterRole}`,
       );
       const rendered = parseAllDocuments(
-        execFileSync("kubectl", ["kustomize", config.bootstrapDirectory], {
+        execFileSync("kubectl", ["kustomize", config.bootstrap.entrypoint], {
           encoding: "utf8",
         }),
       )
@@ -348,11 +492,8 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
           entry.kind === "Application" &&
           entry.metadata?.name === `${clusterRole}-cluster-baseline`,
       );
-      assert.equal(
-        baseline.spec.source.targetRevision,
-        config.bootstrapRevision,
-      );
-      revisions.add(config.bootstrapRevision);
+      assert.match(baseline.spec.source.targetRevision, /^[a-f0-9]{40}$/);
+      revisions.add(config.bootstrap.revision);
       chartVersions.add(config.chartVersion);
     }
   }
@@ -364,25 +505,32 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
 });
 
 test("Argo CD qualification binds the chart artifact and proves two-cluster reconciliation", () => {
+  const values = readFileSync("src/argocdValues.ts", "utf8");
   const chart = readFileSync("scripts/qualify-argocd-chart.mjs", "utf8");
   const twoCluster = readFileSync(
     "scripts/validate-argocd-cluster-roles.mjs",
     "utf8",
   );
+  assert.match(values, /ARGOCD_CHART_VERSION = "10\.2\.1"/);
+  assert.match(
+    values,
+    /27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885/,
+  );
   for (const source of [chart, twoCluster]) {
-    assert.match(source, /CHART_VERSION = "10\.2\.1"/);
-    assert.match(
-      source,
-      /27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885/,
-    );
+    assert.match(source, /loadArgocdValues\(workingDirectory\)/);
     assert.match(source, /sha256\(chart\) !== CHART_DIGEST/);
   }
+  assert.match(chart, /databaseArgocdHelmValues\(\)/);
+  assert.match(chart, /argocdHelmValues\(controllerConfig\(clusterRole\)\)/);
   assert.match(twoCluster, /installArgocd/);
-  assert.match(twoCluster, /"resource\.respectRBAC": "strict"/);
-  assert.match(twoCluster, /"selfsubjectaccessreviews"/);
+  assert.match(twoCluster, /cpSync\("gitops"/);
+  assert.match(twoCluster, /renderRoleInventory/);
+  assert.match(twoCluster, /stringifyResourceReferences\(owned\)/);
+  assert.doesNotMatch(twoCluster, /role-proof/);
+  assert.match(twoCluster, /host\.docker\.internal:host-gateway/);
   assert.match(twoCluster, /status\.sync\?\.status === "Synced"/);
   assert.match(twoCluster, /status\.health\?\.status === "Healthy"/);
-  assert.match(twoCluster, /forbiddenMarker \|\| forbiddenApplication/);
+  assert.match(twoCluster, /forbiddenResources \|\|\s+forbiddenApplication/);
   assert.match(twoCluster, /runOptional\("docker", \["rm", "-f"/);
 });
 
@@ -522,7 +670,7 @@ test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository
         mutateYaml(
           path.join(
             root,
-            "bootstrap/argocd/overlays/dev/execution/kustomization.yaml",
+            "bootstrap/argocd/roles/execution/kustomization.yaml",
           ),
           (documents) => {
             const patch = documents[0].patches.find(
@@ -566,6 +714,28 @@ spec:
         });
       },
       /overlapping Argo ownership/,
+    ],
+    [
+      "cross-role operator authority",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/roles/execution/kustomization.yaml",
+          ),
+          (documents) => {
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.kind === "AppProject" &&
+                candidate.target?.name === "platform-operators",
+            );
+            patch.patch = patch.patch.replace(
+              "      namespace: observability",
+              "      namespace: observability\n    - server: https://kubernetes.default.svc\n      namespace: tailscale",
+            );
+          },
+        ),
+      /platform-operators role-specific destinations/,
     ],
     [
       "remote destination substitution",
@@ -641,15 +811,17 @@ spec:
       "baseline privilege",
       (root) =>
         mutateYaml(
-          path.join(root, "bootstrap/argocd/base/projects.appproject.yaml"),
+          path.join(root, "bootstrap/argocd/roles/platform/kustomization.yaml"),
           (documents) => {
-            project(documents, "bootstrap").spec.clusterResourceWhitelist =
-              project(
-                documents,
-                "bootstrap",
-              ).spec.clusterResourceWhitelist.filter(
-                (resource: any) => resource.kind !== "Namespace",
-              );
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.kind === "AppProject" &&
+                candidate.target?.name === "bootstrap",
+            );
+            patch.patch = patch.patch.replace(
+              '    - group: ""\n      kind: Namespace\n',
+              "",
+            );
           },
         ),
       /resource '\/Namespace' is outside AppProject 'bootstrap'/,
@@ -658,10 +830,17 @@ spec:
       "unsafe Casbin verb",
       (root) =>
         mutateYaml(
-          path.join(root, "bootstrap/argocd/base/projects.appproject.yaml"),
+          path.join(root, "bootstrap/argocd/roles/platform/kustomization.yaml"),
           (documents) => {
-            project(documents, "bootstrap").spec.roles[0].policies[0] =
-              "p, proj:bootstrap:bootstrap-sync, applications, delete, bootstrap/platform-cluster-baseline, allow";
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.kind === "AppProject" &&
+                candidate.target?.name === "bootstrap",
+            );
+            patch.patch = patch.patch.replace(
+              "applications, get",
+              "applications, delete",
+            );
           },
         ),
       /unsafe Casbin tuple/,
@@ -807,6 +986,18 @@ function mutateYaml(file: string, mutate: (documents: any[]) => void) {
     file,
     `${documents.map((document) => stringify(document).trim()).join("\n---\n")}\n`,
   );
+}
+
+function renderKustomization(directory: string) {
+  return parseAllDocuments(
+    execFileSync("kubectl", ["kustomize", directory], { encoding: "utf8" }),
+  )
+    .map((document) => document.toJSON() as any)
+    .filter(Boolean);
+}
+
+function oppositeClusterRole(clusterRole: "platform" | "execution") {
+  return clusterRole === "platform" ? "execution" : "platform";
 }
 
 function project(documents: any[], name: string): any {

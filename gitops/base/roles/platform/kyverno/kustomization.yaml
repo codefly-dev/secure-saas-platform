@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../kyverno
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: kyverno.io/v1
+      kind: ClusterPolicy
+      metadata:
+        name: require-execution-sandbox
+    target:
+      group: kyverno.io
+      kind: ClusterPolicy
+      name: require-execution-sandbox
+  - patch: |-
+      - op: replace
+        path: /spec/matchConditions/0/expression
+        value: >-
+          request.namespace in
+          ['agent-broker', 'agent-egress', 'platform', 'security', 'workloads']
+    target:
+      group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+      name: restricted-workload-native-baseline
