@@ -20,6 +20,55 @@ spec:
         grafana:
           enabled: false
         prometheus:
+          additionalServiceMonitors:
+            - name: argocd-application-controller
+              namespaceSelector:
+                matchNames:
+                  - argocd
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: argocd-metrics
+                  app.kubernetes.io/instance: argocd
+                  app.kubernetes.io/component: application-controller
+              endpoints:
+                - port: http-metrics
+                  path: /metrics
+            - name: argocd-applicationset-controller
+              namespaceSelector:
+                matchNames:
+                  - argocd
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: argocd-metrics
+                  app.kubernetes.io/instance: argocd
+                  app.kubernetes.io/component: applicationset-controller
+              endpoints:
+                - port: http-metrics
+                  path: /metrics
+            - name: argocd-repo-server
+              namespaceSelector:
+                matchNames:
+                  - argocd
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: argocd-repo-server-metrics
+                  app.kubernetes.io/instance: argocd
+                  app.kubernetes.io/component: repo-server
+              endpoints:
+                - port: http-metrics
+                  path: /metrics
+            - name: argocd-server
+              namespaceSelector:
+                matchNames:
+                  - argocd
+              selector:
+                matchLabels:
+                  app.kubernetes.io/name: argocd-server-metrics
+                  app.kubernetes.io/instance: argocd
+                  app.kubernetes.io/component: server
+              endpoints:
+                - port: http-metrics
+                  path: /metrics
           prometheusSpec:
             replicas: 2
             retention: 15d

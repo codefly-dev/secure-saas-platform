@@ -331,7 +331,6 @@ function validateArgoBoundary(documents, label, identity) {
         "https://github.com/codefly-dev/secure-saas-infra.git" &&
         !/^[a-f0-9]{40}$/.test(source.targetRevision)) ||
       (label.includes("overlays/production") &&
-        source.path &&
         ([
           "main",
           "master",
@@ -340,7 +339,7 @@ function validateArgoBoundary(documents, label, identity) {
           "staging",
           "production",
         ].includes(source.targetRevision) ||
-          !/^(?:[a-f0-9]{40}|v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
+          !/^(?:[a-f0-9]{40}|v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
             source.targetRevision,
           )))
     ) {

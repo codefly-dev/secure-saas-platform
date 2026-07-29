@@ -254,7 +254,13 @@ export function argocdControllerRules(
     },
     {
       apiGroups: ["monitoring.coreos.com"],
-      resources: ["podmonitors", "prometheusrules", "servicemonitors"],
+      resources: [
+        "alertmanagers",
+        "podmonitors",
+        "prometheuses",
+        "prometheusrules",
+        "servicemonitors",
+      ],
       verbs: managedVerbs,
     },
     {

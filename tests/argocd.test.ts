@@ -167,6 +167,34 @@ test("Argo CD controller RBAC covers every resource in its selected role baselin
   }
 });
 
+test("Argo CD controller RBAC can reconcile the pinned monitoring stack", () => {
+  for (const clusterRole of ["platform", "execution"] as const) {
+    const roleConfig: ArgocdConfig = {
+      ...config,
+      clusterRole,
+      clusterName: `${clusterRole}-dev`,
+      bootstrap: {
+        ...config.bootstrap,
+        entrypoint: `gitops/bootstrap/argocd/overlays/dev/${clusterRole}`,
+      },
+    };
+    const rules: any[] =
+      argocdHelmValues(roleConfig).controller.clusterRoleRules.rules;
+    const monitoringResources = new Set(
+      rules
+        .filter((rule) => rule.apiGroups.includes("monitoring.coreos.com"))
+        .flatMap((rule) => rule.resources),
+    );
+    assert.deepEqual([...monitoringResources].sort(), [
+      "alertmanagers",
+      "podmonitors",
+      "prometheuses",
+      "prometheusrules",
+      "servicemonitors",
+    ]);
+  }
+});
+
 test("Argo CD publishes a credential-free exact bootstrap handoff", () => {
   const handoff = argocdBootstrapHandoff(config);
   assert.deepEqual(handoff, {

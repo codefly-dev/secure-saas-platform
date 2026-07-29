@@ -538,10 +538,20 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   }
   assert.match(chart, /databaseArgocdHelmValues\(\)/);
   assert.match(chart, /argocdHelmValues\(controllerConfig\(clusterRole\)\)/);
+  assert.match(chart, /qualifyMonitoringIntegration\(controllerConfig\)/);
+  assert.match(
+    chart,
+    /kube-prometheus-stack\.application\.yaml[\s\S]*renderedMonitoringKinds/,
+  );
   assert.match(twoCluster, /installArgocd/);
   assert.match(twoCluster, /cpSync\("gitops"/);
   assert.match(twoCluster, /renderRoleInventory/);
+  assert.match(twoCluster, /qualificationOperatorResources/);
   assert.match(twoCluster, /stringifyResourceReferences\(owned\)/);
+  assert.match(
+    twoCluster,
+    /kubectl\(cluster, \["apply", "-f", "-"\], joinDocuments\(rendered\)\)/,
+  );
   assert.doesNotMatch(twoCluster, /role-proof/);
   assert.match(twoCluster, /host\.docker\.internal:host-gateway/);
   assert.match(twoCluster, /status\.sync\?\.status === "Synced"/);
@@ -554,6 +564,7 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   );
   assert.match(workflow, /npm run platform:validate:source/);
   assert.match(workflow, /npm run platform:qualify:argocd-two-cluster/);
+  assert.equal((workflow.match(/fetch-depth: 0/g) ?? []).length, 2);
 });
 
 test("all GitOps overlays render", () => {
@@ -614,6 +625,21 @@ test("Argo AppProjects deny default authority and bind every Application to an e
     "apiextensions.k8s.io/CustomResourceDefinition",
   ]) {
     assert.equal(tenantKinds.has(forbidden), false, forbidden);
+  }
+  const platformOperatorKinds = new Set(
+    projects
+      .get("platform-operators")
+      .spec.namespaceResourceWhitelist.map(
+        (resource: any) => `${resource.group}/${resource.kind}`,
+      ),
+  );
+  for (const required of [
+    "monitoring.coreos.com/Alertmanager",
+    "monitoring.coreos.com/Prometheus",
+    "monitoring.coreos.com/PrometheusRule",
+    "monitoring.coreos.com/ServiceMonitor",
+  ]) {
+    assert.equal(platformOperatorKinds.has(required), true, required);
   }
   const databaseInfrastructure = projects.get("database-infrastructure").spec;
   assert.deepEqual(
@@ -682,6 +708,33 @@ test("Argo AppProjects deny default authority and bind every Application to an e
     ),
     false,
   );
+});
+
+test("the monitoring stack creates Argo CD ServiceMonitors after installing their CRD", () => {
+  const application = parseAllDocuments(
+    readFileSync(
+      "gitops/bootstrap/argocd/base/apps/kube-prometheus-stack.application.yaml",
+      "utf8",
+    ),
+  )[0].toJSON() as any;
+  const monitors =
+    application.spec.source.helm.valuesObject.prometheus
+      .additionalServiceMonitors;
+  assert.deepEqual(monitors.map((monitor: any) => monitor.name).sort(), [
+    "argocd-application-controller",
+    "argocd-applicationset-controller",
+    "argocd-repo-server",
+    "argocd-server",
+  ]);
+  for (const monitor of monitors) {
+    assert.deepEqual(monitor.namespaceSelector.matchNames, ["argocd"]);
+    assert.equal(monitor.endpoints[0].port, "http-metrics");
+    assert.equal(monitor.endpoints[0].path, "/metrics");
+    assert.equal(
+      monitor.selector.matchLabels["app.kubernetes.io/instance"],
+      "argocd",
+    );
+  }
 });
 
 test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository, and resource-scope escalation", () => {
@@ -892,6 +945,20 @@ spec:
           },
         ),
       /immutable platform cluster-baseline|unsafe target revision/,
+    ],
+    [
+      "mutable production Helm revision",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/base/apps/kube-prometheus-stack.application.yaml",
+          ),
+          (documents) => {
+            documents[0].spec.source.targetRevision = "latest";
+          },
+        ),
+      /unsafe target revision/,
     ],
     [
       "database source path substitution",

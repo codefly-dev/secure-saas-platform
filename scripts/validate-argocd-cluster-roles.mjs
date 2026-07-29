@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
   cpSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -33,7 +34,18 @@ const clusters = new Map();
 const inventories = new Map(
   roles.map((role) => [role, renderRoleInventory(role)]),
 );
-const qualificationResources = roles.flatMap((role) => inventories.get(role));
+const entrypointInventories = new Map(
+  roles.map((role) => [role, renderEntrypointInventory(role)]),
+);
+const qualificationOperatorResources = new Map(
+  roles.map((role) => [
+    role,
+    entrypointInventories
+      .get(role)
+      .filter(isAutomatedOperatorApplication)
+      .map(qualificationOperatorResource),
+  ]),
+);
 let gitDaemon;
 let failure;
 let cleaned = false;
@@ -77,12 +89,18 @@ try {
   const repository = `git://host.docker.internal:${port}/source`;
 
   for (const role of roles) {
-    installQualificationCrds(clusters.get(role), qualificationResources);
+    installQualificationCrds(clusters.get(role), inventories.get(role));
     installArgocd(clusters.get(role), role);
     reconcileRole(clusters.get(role), role, repository, revision);
   }
   for (const role of roles) {
-    assertRoleIsolation(clusters.get(role), role, inventories);
+    assertRoleIsolation(
+      clusters.get(role),
+      role,
+      inventories,
+      entrypointInventories,
+      qualificationOperatorResources,
+    );
   }
 } catch (error) {
   failure = error;
@@ -140,6 +158,22 @@ function validatePrerequisites() {
 
 function createDisposableRepository() {
   cpSync("gitops", path.join(sourceDirectory, "gitops"), { recursive: true });
+  for (const resource of uniqueOperatorResources()) {
+    const directory = path.join(
+      sourceDirectory,
+      qualificationOperatorPath(resource.data.application),
+    );
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      path.join(directory, "kustomization.yaml"),
+      stringify({
+        apiVersion: "kustomize.config.k8s.io/v1beta1",
+        kind: "Kustomization",
+        resources: ["resource.yaml"],
+      }),
+    );
+    writeFileSync(path.join(directory, "resource.yaml"), stringify(resource));
+  }
   run("git", ["init", "-q"], undefined, sourceDirectory);
   run("git", ["add", "."], undefined, sourceDirectory);
   run(
@@ -306,18 +340,12 @@ function installArgocd(cluster, role) {
 }
 
 function reconcileRole(cluster, role, repository, revision) {
-  const rendered = parseAllDocuments(
-    run("kubectl", [
-      "kustomize",
-      `gitops/bootstrap/argocd/overlays/dev/${role}`,
-    ]).stdout,
-  )
-    .map((document) => document.toJSON())
-    .filter(Boolean);
-  const baselines = rendered.filter(
-    (document) =>
-      document.kind === "Application" &&
-      /-cluster-baseline$/.test(document.metadata?.name ?? ""),
+  const rendered = structuredClone(entrypointInventories.get(role));
+  const applications = rendered.filter(
+    (document) => document.kind === "Application",
+  );
+  const baselines = applications.filter((document) =>
+    /-cluster-baseline$/.test(document.metadata?.name ?? ""),
   );
   if (
     baselines.length !== 1 ||
@@ -325,42 +353,85 @@ function reconcileRole(cluster, role, repository, revision) {
   ) {
     throw new Error(`${role} entrypoint did not select exactly one role.`);
   }
-  const application = structuredClone(baselines[0]);
-  application.spec.source.repoURL = repository;
-  application.spec.source.targetRevision = revision;
-  const project = structuredClone(
-    rendered.find(
-      (document) =>
-        document.kind === "AppProject" &&
-        document.metadata?.name === "bootstrap",
+  for (const application of applications) {
+    if (isAutomatedOperatorApplication(application)) {
+      application.spec.source = {
+        repoURL: repository,
+        targetRevision: revision,
+        path: qualificationOperatorPath(application.metadata.name),
+      };
+    } else if (
+      application.spec.source?.repoURL ===
+      "https://github.com/codefly-dev/secure-saas-infra.git"
+    ) {
+      application.spec.source.repoURL = repository;
+      application.spec.source.targetRevision = revision;
+    }
+    if (application.spec.syncPolicy?.automated) {
+      application.spec.syncPolicy.syncOptions = [
+        ...(application.spec.syncPolicy.syncOptions ?? []).filter(
+          (option) => !option.startsWith("CreateNamespace="),
+        ),
+        "CreateNamespace=false",
+      ];
+    }
+  }
+  for (const project of rendered.filter(
+    (document) => document.kind === "AppProject",
+  )) {
+    if (
+      applications.some(
+        (application) => application.spec.project === project.metadata.name,
+      )
+    ) {
+      project.spec.sourceRepos = [repository];
+    }
+  }
+  const namespaces = [
+    ...new Set(
+      applications
+        .filter((application) => application.spec.syncPolicy?.automated)
+        .map((application) => application.spec.destination.namespace)
+        .filter((namespace) => namespace !== "default"),
     ),
-  );
-  if (!project) throw new Error(`${role} entrypoint has no bootstrap project.`);
-  project.spec.sourceRepos = [repository];
-  kubectl(
-    cluster,
-    ["apply", "-f", "-"],
-    `${stringify(project)}---\n${stringify(application)}`,
-  );
-  poll(`${role} Argo reconciliation`, 300, () => {
-    const result = kubectlOptional(cluster, [
-      "get",
-      "application",
-      `${role}-cluster-baseline`,
-      "-n",
-      "argocd",
-      "-o",
-      "json",
-    ]);
-    if (result.status !== 0) return false;
-    const status = JSON.parse(result.stdout).status ?? {};
-    return (
-      status.sync?.status === "Synced" && status.health?.status === "Healthy"
-    );
-  });
+  ].map((namespace) => ({
+    apiVersion: "v1",
+    kind: "Namespace",
+    metadata: { name: namespace },
+  }));
+  if (namespaces.length > 0) {
+    kubectl(cluster, ["apply", "-f", "-"], joinDocuments(namespaces));
+  }
+  kubectl(cluster, ["apply", "-f", "-"], joinDocuments(rendered));
+  for (const application of applications.filter(
+    (candidate) => candidate.spec.syncPolicy?.automated,
+  )) {
+    poll(`${role} ${application.metadata.name} reconciliation`, 300, () => {
+      const result = kubectlOptional(cluster, [
+        "get",
+        "application",
+        application.metadata.name,
+        "-n",
+        application.metadata.namespace,
+        "-o",
+        "json",
+      ]);
+      if (result.status !== 0) return false;
+      const status = JSON.parse(result.stdout).status ?? {};
+      return (
+        status.sync?.status === "Synced" && status.health?.status === "Healthy"
+      );
+    });
+  }
 }
 
-function assertRoleIsolation(cluster, role, roleInventories) {
+function assertRoleIsolation(
+  cluster,
+  role,
+  roleInventories,
+  entrypointResources,
+  operatorResources,
+) {
   const owned = roleInventories.get(role);
   const ownedOutput = kubectl(
     cluster,
@@ -380,21 +451,48 @@ function assertRoleIsolation(cluster, role, roleInventories) {
   const forbidden = roleInventories
     .get(otherRole)
     .filter((resource) => !ownedKeys.has(resourceIdentity(resource)));
-  const forbiddenResources = kubectl(
+  const forbiddenResources = findExistingResources(cluster, forbidden);
+  const ownedOperators = operatorResources.get(role);
+  const ownedOperatorOutput = kubectl(
     cluster,
-    ["get", "-f", "-", "--ignore-not-found", "-o", "name"],
-    stringifyResourceReferences(forbidden),
-  ).stdout.trim();
-  const forbiddenApplication = kubectl(cluster, [
-    "get",
-    "application",
-    `${otherRole}-cluster-baseline`,
-    "-n",
-    "argocd",
-    "--ignore-not-found",
-    "-o",
-    "name",
-  ]).stdout.trim();
+    ["get", "-f", "-", "-o", "name"],
+    stringifyResourceReferences(ownedOperators),
+  )
+    .stdout.trim()
+    .split("\n")
+    .filter(Boolean);
+  const otherOperatorResources = operatorResources
+    .get(otherRole)
+    .filter(
+      (resource) =>
+        !ownedOperators.some(
+          (ownedResource) =>
+            resourceIdentity(ownedResource) === resourceIdentity(resource),
+        ),
+    );
+  const forbiddenOperatorResources =
+    otherOperatorResources.length === 0
+      ? ""
+      : findExistingResources(cluster, otherOperatorResources);
+  const expectedApplications = entrypointResources
+    .get(role)
+    .filter((resource) => resource.kind === "Application")
+    .map(
+      (application) =>
+        `${application.metadata.namespace}/${application.metadata.name}`,
+    )
+    .sort();
+  const actualApplications = JSON.parse(
+    kubectl(cluster, ["get", "applications.argoproj.io", "-A", "-o", "json"])
+      .stdout,
+  )
+    .items.map(
+      (application) =>
+        `${application.metadata.namespace}/${application.metadata.name}`,
+    )
+    .sort();
+  const forbiddenApplication =
+    JSON.stringify(actualApplications) !== JSON.stringify(expectedApplications);
   const databaseNamespace = kubectl(cluster, [
     "get",
     "namespace",
@@ -406,6 +504,8 @@ function assertRoleIsolation(cluster, role, roleInventories) {
   if (
     forbiddenResources ||
     forbiddenApplication ||
+    forbiddenOperatorResources ||
+    ownedOperatorOutput.length !== ownedOperators.length ||
     (role === "platform") !== Boolean(databaseNamespace)
   ) {
     throw new Error(`${otherRole} ownership crossed into the ${role} cluster.`);
@@ -418,6 +518,53 @@ function renderRoleInventory(role) {
   )
     .map((document) => document.toJSON())
     .filter(Boolean);
+}
+
+function renderEntrypointInventory(role) {
+  return parseAllDocuments(
+    run("kubectl", [
+      "kustomize",
+      `gitops/bootstrap/argocd/overlays/dev/${role}`,
+    ]).stdout,
+  )
+    .map((document) => document.toJSON())
+    .filter(Boolean);
+}
+
+function isAutomatedOperatorApplication(resource) {
+  return (
+    resource.kind === "Application" &&
+    resource.spec?.syncPolicy?.automated &&
+    !/-cluster-baseline$/.test(resource.metadata?.name ?? "")
+  );
+}
+
+function qualificationOperatorResource(application) {
+  return {
+    apiVersion: "v1",
+    kind: "ConfigMap",
+    metadata: {
+      name: `argocd-qualification-${application.metadata.name}`,
+      namespace: application.spec.destination.namespace,
+    },
+    data: {
+      application: application.metadata.name,
+    },
+  };
+}
+
+function qualificationOperatorPath(applicationName) {
+  return `gitops/qualification/operators/${applicationName}`;
+}
+
+function uniqueOperatorResources() {
+  return [
+    ...new Map(
+      roles
+        .flatMap((role) => qualificationOperatorResources.get(role))
+        .map((resource) => [resourceIdentity(resource), resource]),
+    ).values(),
+  ];
 }
 
 function installQualificationCrds(cluster, resources) {
@@ -494,6 +641,25 @@ function stringifyResourceReferences(resources) {
       },
     })),
   );
+}
+
+function findExistingResources(cluster, resources) {
+  return resources
+    .flatMap((resource) => {
+      const result = kubectlOptional(
+        cluster,
+        ["get", "-f", "-", "--ignore-not-found", "-o", "name"],
+        stringifyResourceReferences([resource]),
+      );
+      if (result.status === 0) {
+        return result.stdout.trim() ? [result.stdout.trim()] : [];
+      }
+      if (result.stderr.includes("no matches for kind")) return [];
+      throw new Error(
+        `Cannot verify isolation for ${resourceIdentity(resource)}: ${result.stderr}`,
+      );
+    })
+    .join("\n");
 }
 
 function joinDocuments(documents) {

@@ -132,6 +132,7 @@ try {
       }
     }
   }
+  qualifyMonitoringIntegration(controllerConfig);
 
   process.stdout.write(
     `Argo CD chart ${CHART_VERSION} qualified at ${CHART_DIGEST}.\n`,
@@ -142,6 +143,146 @@ try {
 
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function qualifyMonitoringIntegration(controllerConfig) {
+  const application = parseAllDocuments(
+    readFileSync(
+      "gitops/bootstrap/argocd/base/apps/kube-prometheus-stack.application.yaml",
+      "utf8",
+    ),
+  )[0].toJSON();
+  const source = application.spec.source;
+  const monitoringChart = path.join(
+    workingDirectory,
+    `${source.chart}-${source.targetRevision}.tgz`,
+  );
+  const monitoringValues = path.join(
+    workingDirectory,
+    "kube-prometheus-stack-values.yaml",
+  );
+  writeFileSync(monitoringValues, stringify(source.helm.valuesObject), {
+    mode: 0o600,
+  });
+  run("helm", [
+    "pull",
+    source.chart,
+    "--repo",
+    source.repoURL,
+    "--version",
+    source.targetRevision,
+    "--destination",
+    workingDirectory,
+  ]);
+  const rendered = run("helm", [
+    "template",
+    "kube-prometheus-stack",
+    monitoringChart,
+    "--namespace",
+    application.spec.destination.namespace,
+    "--kube-version",
+    "1.33.9",
+    "--values",
+    monitoringValues,
+  ]).stdout;
+  const resources = parseAllDocuments(rendered)
+    .map((document) => document.toJSON())
+    .filter(Boolean)
+    .flatMap((document) =>
+      document.kind === "List" ? document.items : [document],
+    );
+  const resourceNames = new Map([
+    ["Alertmanager", "alertmanagers"],
+    ["PodMonitor", "podmonitors"],
+    ["Prometheus", "prometheuses"],
+    ["PrometheusRule", "prometheusrules"],
+    ["ServiceMonitor", "servicemonitors"],
+  ]);
+  const renderedMonitoringKinds = [
+    ...new Set(
+      resources
+        .filter((resource) =>
+          String(resource.apiVersion).startsWith("monitoring.coreos.com/"),
+        )
+        .map((resource) => resource.kind),
+    ),
+  ].sort();
+  const expectedMonitoringKinds = [
+    "Alertmanager",
+    "Prometheus",
+    "PrometheusRule",
+    "ServiceMonitor",
+  ];
+  if (
+    JSON.stringify(renderedMonitoringKinds) !==
+    JSON.stringify(expectedMonitoringKinds)
+  ) {
+    throw new Error(
+      "The pinned monitoring chart rendered an unexpected monitoring resource inventory.",
+    );
+  }
+  const project = parseAllDocuments(
+    run("kubectl", [
+      "kustomize",
+      "gitops/bootstrap/argocd/overlays/dev/platform",
+    ]).stdout,
+  )
+    .map((document) => document.toJSON())
+    .find(
+      (document) =>
+        document.kind === "AppProject" &&
+        document.metadata?.name === "platform-operators",
+    );
+  const allowedKinds = new Set(
+    project.spec.namespaceResourceWhitelist.map(
+      (resource) => `${resource.group}/${resource.kind}`,
+    ),
+  );
+  for (const kind of renderedMonitoringKinds) {
+    if (!allowedKinds.has(`monitoring.coreos.com/${kind}`)) {
+      throw new Error(
+        `platform-operators cannot reconcile monitoring.coreos.com/${kind}.`,
+      );
+    }
+  }
+  for (const clusterRole of ["platform", "execution"]) {
+    const rules = argocdHelmValues(controllerConfig(clusterRole)).controller
+      .clusterRoleRules.rules;
+    for (const kind of renderedMonitoringKinds) {
+      if (
+        !rules.some(
+          (rule) =>
+            rule.apiGroups.includes("monitoring.coreos.com") &&
+            rule.resources.includes(resourceNames.get(kind)),
+        )
+      ) {
+        throw new Error(
+          `${clusterRole} Argo CD cannot reconcile monitoring.coreos.com/${kind}.`,
+        );
+      }
+    }
+  }
+  const argocdMonitors = resources
+    .filter(
+      (resource) =>
+        resource.kind === "ServiceMonitor" &&
+        resource.metadata?.name?.startsWith("argocd-"),
+    )
+    .map((resource) => resource.metadata.name)
+    .sort();
+  if (
+    JSON.stringify(argocdMonitors) !==
+    JSON.stringify([
+      "argocd-application-controller",
+      "argocd-applicationset-controller",
+      "argocd-repo-server",
+      "argocd-server",
+    ])
+  ) {
+    throw new Error(
+      "The monitoring stack does not render the exact Argo CD ServiceMonitor inventory.",
+    );
+  }
 }
 
 function run(command, args) {

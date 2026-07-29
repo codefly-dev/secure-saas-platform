@@ -161,7 +161,11 @@ spec:
     - group: batch
       kind: Job
     - group: monitoring.coreos.com
+      kind: Alertmanager
+    - group: monitoring.coreos.com
       kind: PodMonitor
+    - group: monitoring.coreos.com
+      kind: Prometheus
     - group: monitoring.coreos.com
       kind: PrometheusRule
     - group: monitoring.coreos.com
