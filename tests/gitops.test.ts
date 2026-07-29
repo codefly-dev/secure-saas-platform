@@ -519,6 +519,8 @@ test("Pulumi Argo CD handoffs align the qualified chart and immutable role entry
 });
 
 test("Argo CD qualification binds the chart artifact and proves two-cluster reconciliation", () => {
+  const packageConfig = JSON.parse(readFileSync("package.json", "utf8"));
+  const workflow = readFileSync(".github/workflows/platform-ci.yml", "utf8");
   const values = readFileSync("src/argocdValues.ts", "utf8");
   const chart = readFileSync("scripts/qualify-argocd-chart.mjs", "utf8");
   const twoCluster = readFileSync(
@@ -546,6 +548,12 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   assert.match(twoCluster, /status\.health\?\.status === "Healthy"/);
   assert.match(twoCluster, /forbiddenResources \|\|\s+forbiddenApplication/);
   assert.match(twoCluster, /runOptional\("docker", \["rm", "-f"/);
+  assert.equal(
+    packageConfig.scripts["platform:validate:source"],
+    "npm run platform:test && npm run platform:validate:gitops && npm run platform:qualify:argocd-chart",
+  );
+  assert.match(workflow, /npm run platform:validate:source/);
+  assert.match(workflow, /npm run platform:qualify:argocd-two-cluster/);
 });
 
 test("all GitOps overlays render", () => {
