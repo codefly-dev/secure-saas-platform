@@ -43,3 +43,29 @@ Production promotion is restricted to a reviewed signed commit or protected
 immutable `v*` tag. The protected `production` environment runs activation on
 the promotion runner and uploads evidence containing the resolved and observed
 Argo revision, sync status, and health.
+
+## Manifest bundle landing
+
+Codefly's separate deployment/promotion driver lands module and service
+manifest bundles under `gitops/generated/modules/<environment>/<module>/<service>`
+and records a provenance inventory in
+`gitops/generated/modules/inventory.json`. Service and module plugins only emit
+plain Kubernetes manifests; they never own repository source bindings or Argo CD
+reconciliation objects, and they never need to know this repository exists.
+
+The inventory conforms to
+`schemas/codefly-manifest-bundle-inventory-v1.schema.json` and pins, per bundle,
+the exact bundle digest, the producing plugin identity and contract version, the
+environment, the module/service identity, and the reviewed immutable source
+revision. The platform/promotion layer owns the Argo CD objects that bind
+approved bundle paths to clusters.
+
+```sh
+npm run validate:manifest-bundles
+```
+
+Part of `npm run check`, this gate rejects plugin-owned Argo objects,
+repository credentials, `repoURL`/`targetRevision` bindings, landing-path
+ownership overlap, mutable revisions, cross-path writes, and stale
+inventory/digest mismatches. The same contract covers local qualification and
+production promotion.

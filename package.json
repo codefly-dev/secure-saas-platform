@@ -4,11 +4,12 @@
   "private": true,
   "description": "Protected GitOps release owner for the secure SaaS platform.",
   "scripts": {
-    "check": "npm run format:check && npm run test && npm run validate:gitops && npm run qualify:argocd-chart",
+    "check": "npm run format:check && npm run test && npm run validate:gitops && npm run validate:manifest-bundles && npm run qualify:argocd-chart",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "test": "node -e \"require('node:fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test dist-test/tests/*.test.js",
     "validate:gitops": "node scripts/validate-gitops.mjs",
+    "validate:manifest-bundles": "node scripts/validate-manifest-bundles.mjs",
     "qualify:argocd-chart": "node scripts/qualify-argocd-chart.mjs",
     "qualify:argocd-two-cluster": "node scripts/validate-argocd-cluster-roles.mjs",
     "qualify:disposable-cluster": "node scripts/validate-disposable-cluster.mjs",
