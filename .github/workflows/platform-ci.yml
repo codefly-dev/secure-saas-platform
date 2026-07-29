@@ -1,0 +1,59 @@
+name: platform-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Argo CD source qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - name: Install exact npm version and dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm ci --ignore-scripts
+      - name: Validate role sources and qualify the reviewed chart
+        run: npm run platform:validate:source
+
+  two-cluster:
+    name: Argo CD two-cluster role qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - name: Install exact npm version and dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm ci --ignore-scripts
+      - name: Pull the reviewed K3s image
+        run: docker pull rancher/k3s@sha256:f17e43023cce2b9c613e198f26e73637bf734b5156d37c9f44819d97bac4d655
+      - name: Reconcile exact role baselines in two clusters
+        run: npm run platform:qualify:argocd-two-cluster

@@ -26,6 +26,7 @@ export interface CapturedCall {
 export async function installPulumiMocks() {
   const resources: CapturedResource[] = [];
   const calls: CapturedCall[] = [];
+  pulumi.runtime.setConfig("aws:region", "us-east-1");
 
   await pulumi.runtime.setMocks(
     {
@@ -179,6 +180,22 @@ export async function installPulumiMocks() {
                       "execution-staging": "111111111119",
                       "platform-prod": "111111111120",
                       "execution-prod": "111111111121",
+                    },
+                    eksClusters: {
+                      "platform-dev": {
+                        name: "platform-dev",
+                        endpoint: "https://platform-dev.eks.local",
+                        certificateAuthority: {
+                          data: "test-certificate-authority",
+                        },
+                      },
+                      "execution-dev": {
+                        name: "execution-dev",
+                        endpoint: "https://execution-dev.eks.local",
+                        certificateAuthority: {
+                          data: "test-certificate-authority",
+                        },
+                      },
                     },
                   }
                 : args.inputs.outputs,

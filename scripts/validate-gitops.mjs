@@ -4,18 +4,17 @@ import path from "node:path";
 import { parseAllDocuments } from "yaml";
 
 const gitopsRoot = argument("--gitops-root") ?? "gitops";
-const relativeOverlays = [
-  "bootstrap/argocd",
-  "bootstrap/argocd/overlays/dev",
-  "bootstrap/argocd/overlays/staging",
-  "bootstrap/argocd/overlays/production",
-  "overlays/dev/platform",
-  "overlays/dev/execution",
-  "overlays/staging/platform",
-  "overlays/staging/execution",
-  "overlays/production/platform",
-  "overlays/production/execution",
-];
+const environments = ["dev", "staging", "production"];
+const clusterRoles = ["platform", "execution"];
+const bootstrapEntrypoints = environments.flatMap((environment) =>
+  clusterRoles.map(
+    (clusterRole) => `bootstrap/argocd/overlays/${environment}/${clusterRole}`,
+  ),
+);
+const baselineEntrypoints = environments.flatMap((environment) =>
+  clusterRoles.map((clusterRole) => `overlays/${environment}/${clusterRole}`),
+);
+const relativeOverlays = [...bootstrapEntrypoints, ...baselineEntrypoints];
 const overlays = relativeOverlays.map((overlay) =>
   path.join(gitopsRoot, overlay),
 );
@@ -45,12 +44,19 @@ for (const overlay of overlays) {
   renderedByOverlay.set(overlay, parseDocuments(result.stdout, overlay));
 }
 
-const argoOverlays = overlays.slice(0, 4);
+const argoOverlays = overlays.slice(0, bootstrapEntrypoints.length);
 for (const overlay of argoOverlays) {
-  validateArgoBoundary(renderedByOverlay.get(overlay), overlay);
+  const identity = bootstrapIdentity(overlay);
+  validateRoleInventory(
+    renderedByOverlay.get(overlay),
+    overlay,
+    identity,
+    renderedByOverlay,
+  );
+  validateArgoBoundary(renderedByOverlay.get(overlay), overlay, identity);
   validateBaselineResources(renderedByOverlay.get(overlay), renderedByOverlay);
 }
-for (const overlay of overlays.slice(4)) {
+for (const overlay of overlays.slice(bootstrapEntrypoints.length)) {
   validateRestrictedNamespaceEnrollment(
     renderedByOverlay.get(overlay),
     overlay,
@@ -72,7 +78,7 @@ function parseDocuments(source, label) {
     .filter(Boolean);
 }
 
-function validateArgoBoundary(documents, label) {
+function validateArgoBoundary(documents, label, identity) {
   const projects = documents.filter(
     (document) => document.kind === "AppProject",
   );
@@ -81,12 +87,12 @@ function validateArgoBoundary(documents, label) {
   );
   const expected = [
     "bootstrap",
-    "database-infrastructure",
+    ...(identity.clusterRole === "platform" ? ["database-infrastructure"] : []),
     "default",
     "platform-operators",
     "security",
     "tenant-delivery",
-  ];
+  ].sort();
   const names = projects.map((project) => project.metadata?.name).sort();
   if (JSON.stringify(names) !== JSON.stringify(expected)) {
     fail(label, `must render exactly AppProjects: ${expected.join(", ")}`);
@@ -104,6 +110,45 @@ function validateArgoBoundary(documents, label) {
     if (!Array.isArray(deniedDefault?.[field]) || deniedDefault[field].length) {
       fail(label, `default AppProject ${field} must be an explicit empty list`);
     }
+  }
+  const bootstrap = byName.get("bootstrap");
+  const expectedBootstrapDestinations =
+    identity.clusterRole === "platform"
+      ? [
+          "agent-broker",
+          "agent-egress",
+          "istio-system",
+          "kube-system",
+          "platform",
+          "security",
+          "tailscale",
+          "workloads",
+        ]
+      : ["execution", "istio-system", "kube-system", "security"];
+  assertExactSet(
+    new Set(
+      (bootstrap?.spec?.destinations ?? []).map(
+        (destination) => destination.namespace,
+      ),
+    ),
+    expectedBootstrapDestinations,
+    label,
+    "bootstrap AppProject destinations",
+  );
+  const expectedBaseline = `${identity.clusterRole}-cluster-baseline`;
+  const bootstrapPolicies = (bootstrap?.spec?.roles ?? []).flatMap(
+    (role) => role.policies ?? [],
+  );
+  if (
+    bootstrapPolicies.length !== 2 ||
+    bootstrapPolicies.some(
+      (policy) => !policy.includes(`bootstrap/${expectedBaseline}`),
+    )
+  ) {
+    fail(
+      label,
+      `bootstrap AppProject must authorize only '${expectedBaseline}'`,
+    );
   }
   for (const project of projects.filter(
     (candidate) => candidate.metadata.name !== "default",
@@ -227,11 +272,17 @@ function validateArgoBoundary(documents, label) {
       fail(label, `tenant-delivery cannot own '${forbidden}'`);
     }
   }
-  validateDatabaseInfrastructureProject(
-    byName.get("database-infrastructure"),
+  if (identity.clusterRole === "platform") {
+    validateDatabaseInfrastructureProject(
+      byName.get("database-infrastructure"),
+      label,
+    );
+  }
+  validateDatabaseInfrastructureApplication(
+    applications,
     label,
+    identity.clusterRole,
   );
-  validateDatabaseInfrastructureApplication(applications, label);
   for (const application of applications) {
     const projectName = application.spec?.project;
     if (!projectName || projectName === "default") {
@@ -254,6 +305,12 @@ function validateArgoBoundary(documents, label) {
       );
     }
     const destination = application.spec.destination;
+    if (destination.server !== "https://kubernetes.default.svc") {
+      fail(
+        label,
+        `${application.metadata.name} remote destination substitution denied`,
+      );
+    }
     if (
       !project.spec.destinations.some(
         (allowed) =>
@@ -270,8 +327,10 @@ function validateArgoBoundary(documents, label) {
       typeof source.targetRevision !== "string" ||
       source.targetRevision === "HEAD" ||
       source.targetRevision.includes("*") ||
+      (source.repoURL ===
+        "https://github.com/codefly-dev/secure-saas-infra.git" &&
+        !/^[a-f0-9]{40}$/.test(source.targetRevision)) ||
       (label.includes("overlays/production") &&
-        source.path &&
         ([
           "main",
           "master",
@@ -280,27 +339,230 @@ function validateArgoBoundary(documents, label) {
           "staging",
           "production",
         ].includes(source.targetRevision) ||
-          !/^(?:[a-f0-9]{40}|v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
+          !/^(?:[a-f0-9]{40}|v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
             source.targetRevision,
           )))
     ) {
       fail(label, `${application.metadata.name} has an unsafe target revision`);
     }
   }
+  for (const projectName of ["platform-operators", "security"]) {
+    const project = byName.get(projectName);
+    const ownedApplications = applications.filter(
+      (application) => application.spec?.project === projectName,
+    );
+    assertExactSet(
+      new Set(project.spec.sourceRepos),
+      new Set(
+        ownedApplications.map((application) => application.spec.source.repoURL),
+      ),
+      label,
+      `${projectName} role-specific source repositories`,
+    );
+    assertExactSet(
+      new Set(
+        project.spec.destinations.map((destination) => destination.namespace),
+      ),
+      new Set(
+        ownedApplications.map(
+          (application) => application.spec.destination.namespace,
+        ),
+      ),
+      label,
+      `${projectName} role-specific destinations`,
+    );
+    const role = project.spec.roles[0];
+    assertExactSet(
+      new Set(role.policies),
+      new Set(
+        ownedApplications.flatMap((application) =>
+          ["get", "sync"].map(
+            (action) =>
+              `p, proj:${projectName}:${role.name}, applications, ${action}, ${projectName}/${application.metadata.name}, allow`,
+          ),
+        ),
+      ),
+      label,
+      `${projectName} role-specific policies`,
+    );
+  }
+  assertExactSet(
+    new Set(
+      byName
+        .get("tenant-delivery")
+        .spec.destinations.map((destination) => destination.namespace),
+    ),
+    [identity.clusterRole === "platform" ? "workloads" : "execution"],
+    label,
+    "tenant-delivery role-specific destinations",
+  );
 }
 
-function validateDatabaseInfrastructureApplication(applications, label) {
+function bootstrapIdentity(label) {
+  const match =
+    /bootstrap\/argocd\/overlays\/(dev|staging|production)\/(platform|execution)$/.exec(
+      label,
+    );
+  if (!match) fail(label, "is not an explicit environment/role entrypoint");
+  return { environment: match[1], clusterRole: match[2] };
+}
+
+function validateRoleInventory(documents, label, identity, renderedByOverlay) {
+  const applications = documents.filter(
+    (document) => document.kind === "Application",
+  );
+  for (const application of applications) {
+    if (
+      application.spec?.destination?.server !== "https://kubernetes.default.svc"
+    ) {
+      fail(
+        label,
+        `${application.metadata?.name} remote destination substitution denied`,
+      );
+    }
+  }
+  validateArgoOwnership(applications, label, renderedByOverlay);
+  const common = [
+    "falco",
+    "istio-base",
+    "istio-cni",
+    "istio-ztunnel",
+    "istiod",
+    "kube-prometheus-stack",
+    "kyverno",
+    "metrics-server",
+  ];
+  const expected =
+    identity.clusterRole === "platform"
+      ? [
+          "argo-rollouts",
+          "cert-manager",
+          "database-infrastructure-handoff",
+          "external-dns",
+          "gateway-api-crds",
+          "istio-ingress-gateway",
+          ...common,
+          "platform-cluster-baseline",
+          "tailscale-operator",
+          "vault",
+          "vault-secrets-operator",
+        ].sort()
+      : [...common, "execution-cluster-baseline"].sort();
+  const actual = applications
+    .map((application) => application.metadata?.name)
+    .sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(
+      label,
+      `${identity.clusterRole} role Application inventory must equal ${expected.join(", ")}`,
+    );
+  }
+
+  const roleApplications = applications.filter((application) =>
+    /^(?:platform|execution)-cluster-baseline$/.test(
+      application.metadata?.name ?? "",
+    ),
+  );
+  const baseline = roleApplications[0];
+  if (
+    roleApplications.length !== 1 ||
+    baseline.metadata?.name !== `${identity.clusterRole}-cluster-baseline` ||
+    baseline.spec?.project !== "bootstrap" ||
+    baseline.spec?.source?.repoURL !==
+      "https://github.com/codefly-dev/secure-saas-infra.git" ||
+    baseline.spec?.source?.path !==
+      `gitops/overlays/${identity.environment}/${identity.clusterRole}` ||
+    !/^[a-f0-9]{40}$/.test(baseline.spec?.source?.targetRevision ?? "") ||
+    baseline.spec?.destination?.server !== "https://kubernetes.default.svc" ||
+    baseline.spec?.destination?.namespace !== identity.clusterRole
+  ) {
+    fail(
+      label,
+      `must render exactly one immutable ${identity.clusterRole} cluster-baseline Application`,
+    );
+  }
+  if (
+    !(baseline.spec?.syncPolicy?.syncOptions ?? []).includes(
+      "FailOnSharedResource=true",
+    )
+  ) {
+    fail(label, `${baseline.metadata.name} must fail on shared resources`);
+  }
+}
+
+function validateArgoOwnership(applications, label, renderedByOverlay) {
+  const sources = new Map();
+  const resources = new Map();
+  for (const application of applications) {
+    const source = application.spec?.source ?? {};
+    const destination = application.spec?.destination ?? {};
+    const sourceKey = [
+      destination.server,
+      destination.namespace,
+      source.repoURL,
+      source.chart ?? source.path,
+    ].join("|");
+    const previousSource = sources.get(sourceKey);
+    if (previousSource) {
+      fail(
+        label,
+        `overlapping Argo ownership between '${previousSource}' and '${application.metadata?.name}'`,
+      );
+    }
+    sources.set(sourceKey, application.metadata?.name);
+
+    if (
+      source.repoURL !==
+        "https://github.com/codefly-dev/secure-saas-infra.git" ||
+      !/^gitops\/overlays\/(?:dev|staging|production)\/(?:platform|execution)$/.test(
+        source.path ?? "",
+      )
+    ) {
+      continue;
+    }
+    const rendered = renderedByOverlay.get(
+      path.join(gitopsRoot, source.path.replace(/^gitops\//, "")),
+    );
+    if (!rendered) {
+      fail(label, `${application.metadata?.name} has no rendered source`);
+    }
+    for (const resource of rendered) {
+      const key = [
+        resource.apiVersion,
+        resource.kind,
+        resource.metadata?.namespace ?? "<cluster>",
+        resource.metadata?.name,
+      ].join("|");
+      const owner = resources.get(key);
+      if (owner) {
+        fail(
+          label,
+          `overlapping Argo ownership of '${key}' between '${owner}' and '${application.metadata?.name}'`,
+        );
+      }
+      resources.set(key, application.metadata?.name);
+    }
+  }
+}
+
+function validateDatabaseInfrastructureApplication(
+  applications,
+  label,
+  clusterRole,
+) {
   const environment = environmentForLabel(label);
   const matches = applications.filter(
     (application) =>
       application.metadata?.name === "database-infrastructure-handoff",
   );
-  if (matches.length !== 1) {
+  const expectedCount = clusterRole === "platform" ? 1 : 0;
+  if (matches.length !== expectedCount) {
     fail(
       label,
-      "must render exactly one controller-owned database-infrastructure-handoff Application",
+      `must render exactly ${expectedCount} controller-owned database-infrastructure-handoff Application`,
     );
   }
+  if (expectedCount === 0) return;
   const application = matches[0];
   const expectedNamespace = `codefly-db-runtime-warden-saas-postgres-${environment}`;
   if (
@@ -404,14 +666,52 @@ function assertExactSet(actual, expected, label, subject) {
 }
 
 function validateRestrictedNamespaceEnrollment(documents, label) {
-  const expected = [
-    "agent-broker",
-    "agent-egress",
-    "execution",
-    "platform",
-    "security",
-    "workloads",
-  ];
+  const match =
+    /overlays\/(?:dev|staging|production)\/(platform|execution)$/.exec(label);
+  if (!match) fail(label, "is not an explicit environment/role baseline");
+  const clusterRole = match[1];
+  const expected =
+    clusterRole === "platform"
+      ? ["agent-broker", "agent-egress", "platform", "security", "workloads"]
+      : ["execution", "security"];
+  const expectedNamespaces =
+    clusterRole === "platform"
+      ? [
+          "agent-broker",
+          "agent-egress",
+          "argo-rollouts",
+          "cert-manager",
+          "external-dns",
+          "falco",
+          "istio-ingress",
+          "istio-system",
+          "metrics-server",
+          "observability",
+          "platform",
+          "security",
+          "tailscale",
+          "vault",
+          "vault-secrets-operator",
+          "workloads",
+        ]
+      : [
+          "execution",
+          "falco",
+          "istio-system",
+          "metrics-server",
+          "observability",
+          "security",
+        ];
+  assertExactSet(
+    new Set(
+      documents
+        .filter((document) => document.kind === "Namespace")
+        .map((document) => document.metadata.name),
+    ),
+    expectedNamespaces,
+    label,
+    `${clusterRole} namespace ownership`,
+  );
   const restricted = documents
     .filter(
       (document) =>
@@ -485,6 +785,8 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
         )
         .map((destination) => destination.namespace),
     );
+    const renderedClusterKinds = new Set();
+    const renderedNamespaceKinds = new Set();
     for (const resource of resources) {
       const apiGroup = String(resource.apiVersion ?? "").split("/")[0];
       const group = String(resource.apiVersion).includes("/") ? apiGroup : "";
@@ -492,6 +794,10 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
       const scoped = resource.metadata?.namespace
         ? namespaceKinds
         : clusterKinds;
+      (resource.metadata?.namespace
+        ? renderedNamespaceKinds
+        : renderedClusterKinds
+      ).add(key);
       if (!scoped.has(key)) {
         fail(
           sourcePath,
@@ -508,6 +814,18 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
         );
       }
     }
+    assertExactSet(
+      clusterKinds,
+      renderedClusterKinds,
+      sourcePath,
+      `${application.spec.project} cluster resource authority`,
+    );
+    assertExactSet(
+      namespaceKinds,
+      renderedNamespaceKinds,
+      sourcePath,
+      `${application.spec.project} namespace resource authority`,
+    );
     if (sourcePath.endsWith("/platform")) {
       validateDatabaseControllerPolicy(resources, sourcePath);
     }

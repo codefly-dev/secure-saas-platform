@@ -243,53 +243,330 @@ test("Argo CD includes common platform operators", () => {
   }
 });
 
-test("Argo CD bootstrap has environment overlays for platform and execution clusters", () => {
+test("Argo CD bootstrap entrypoints render one immutable cluster role", () => {
+  const common = [
+    "falco",
+    "istio-base",
+    "istio-cni",
+    "istio-ztunnel",
+    "istiod",
+    "kube-prometheus-stack",
+    "kyverno",
+    "metrics-server",
+  ];
   for (const environment of ["dev", "staging", "production"]) {
-    const bootstrap = readFileSync(
-      `gitops/bootstrap/argocd/overlays/${environment}/kustomization.yaml`,
-      "utf8",
-    );
-    const platformPatch = readFileSync(
-      `gitops/bootstrap/argocd/overlays/${environment}/platform-application-patch.yaml`,
-      "utf8",
-    );
-    const executionPatch = readFileSync(
-      `gitops/bootstrap/argocd/overlays/${environment}/execution-application-patch.yaml`,
-      "utf8",
-    );
-
-    assert.match(bootstrap, /platform-cluster-baseline/);
-    assert.match(bootstrap, /execution-cluster-baseline/);
-    assert.match(
-      platformPatch,
-      new RegExp(`gitops/overlays/${environment}/platform`),
-    );
-    assert.match(
-      executionPatch,
-      new RegExp(`gitops/overlays/${environment}/execution`),
-    );
-    if (environment !== "dev") {
-      const databasePatch = readFileSync(
-        `gitops/bootstrap/argocd/overlays/${environment}/database-infrastructure-project-patch.yaml`,
-        "utf8",
+    for (const clusterRole of ["platform", "execution"]) {
+      const entrypoint = `gitops/bootstrap/argocd/overlays/${environment}/${clusterRole}`;
+      const documents = parseAllDocuments(
+        execFileSync("kubectl", ["kustomize", entrypoint], {
+          encoding: "utf8",
+        }),
+      )
+        .map((document) => document.toJSON() as any)
+        .filter(Boolean);
+      const applications = documents.filter(
+        (document) => document.kind === "Application",
       );
-      assert.match(bootstrap, /database-infrastructure-project-patch/);
-      assert.match(
-        databasePatch,
-        new RegExp(`codefly-db-runtime-warden-saas-postgres-${environment}`),
+      const expected =
+        clusterRole === "platform"
+          ? [
+              "argo-rollouts",
+              "cert-manager",
+              "database-infrastructure-handoff",
+              "external-dns",
+              "gateway-api-crds",
+              "istio-ingress-gateway",
+              ...common,
+              "platform-cluster-baseline",
+              "tailscale-operator",
+              "vault",
+              "vault-secrets-operator",
+            ].sort()
+          : [...common, "execution-cluster-baseline"].sort();
+      assert.deepEqual(
+        applications.map((application) => application.metadata.name).sort(),
+        expected,
       );
-      assert.doesNotMatch(databasePatch, /-development/);
-      const applicationPatch = readFileSync(
-        `gitops/bootstrap/argocd/overlays/${environment}/database-infrastructure-application-patch.yaml`,
-        "utf8",
+      const baselines = applications.filter((application) =>
+        /-cluster-baseline$/.test(application.metadata.name),
       );
-      assert.match(bootstrap, /database-infrastructure-application-patch/);
-      assert.match(
-        applicationPatch,
-        new RegExp(`gitops/generated/database/${environment}`),
+      assert.equal(baselines.length, 1);
+      assert.equal(
+        baselines[0].metadata.name,
+        `${clusterRole}-cluster-baseline`,
+      );
+      assert.equal(
+        baselines[0].spec.source.path,
+        `gitops/overlays/${environment}/${clusterRole}`,
+      );
+      assert.match(baselines[0].spec.source.targetRevision, /^[a-f0-9]{40}$/);
+      assert.equal(
+        baselines[0].spec.destination.server,
+        "https://kubernetes.default.svc",
+      );
+      assert.ok(
+        baselines[0].spec.syncPolicy.syncOptions.includes(
+          "FailOnSharedResource=true",
+        ),
       );
     }
   }
+});
+
+test("cluster baselines own only namespaces and bootstrap authority assigned to their role", () => {
+  const expectations = {
+    platform: {
+      namespaces: [
+        "agent-broker",
+        "agent-egress",
+        "argo-rollouts",
+        "cert-manager",
+        "external-dns",
+        "falco",
+        "istio-ingress",
+        "istio-system",
+        "metrics-server",
+        "observability",
+        "platform",
+        "security",
+        "tailscale",
+        "vault",
+        "vault-secrets-operator",
+        "workloads",
+      ],
+      destinations: [
+        "agent-broker",
+        "agent-egress",
+        "istio-system",
+        "kube-system",
+        "platform",
+        "security",
+        "tailscale",
+        "workloads",
+      ],
+    },
+    execution: {
+      namespaces: [
+        "execution",
+        "falco",
+        "istio-system",
+        "metrics-server",
+        "observability",
+        "security",
+      ],
+      destinations: ["execution", "istio-system", "kube-system", "security"],
+    },
+  } as const;
+
+  for (const clusterRole of ["platform", "execution"] as const) {
+    const baseline = renderKustomization(`gitops/overlays/dev/${clusterRole}`);
+    assert.deepEqual(
+      baseline
+        .filter((document) => document.kind === "Namespace")
+        .map((document) => document.metadata.name)
+        .sort(),
+      [...expectations[clusterRole].namespaces].sort(),
+    );
+
+    const bootstrap = renderKustomization(
+      `gitops/bootstrap/argocd/overlays/dev/${clusterRole}`,
+    );
+    const project = bootstrap.find(
+      (document) =>
+        document.kind === "AppProject" &&
+        document.metadata?.name === "bootstrap",
+    );
+    assert.deepEqual(
+      project.spec.destinations
+        .map((destination: any) => destination.namespace)
+        .sort(),
+      [...expectations[clusterRole].destinations].sort(),
+    );
+    const policies = project.spec.roles.flatMap(
+      (role: any) => role.policies ?? [],
+    );
+    assert.ok(
+      policies.every((policy: string) =>
+        policy.includes(`bootstrap/${clusterRole}-cluster-baseline`),
+      ),
+    );
+    assert.doesNotMatch(
+      JSON.stringify(project),
+      new RegExp(
+        `bootstrap/${oppositeClusterRole(clusterRole)}-cluster-baseline`,
+      ),
+    );
+
+    for (const projectName of ["platform-operators", "security"]) {
+      const scopedProject = bootstrap.find(
+        (document) =>
+          document.kind === "AppProject" &&
+          document.metadata?.name === projectName,
+      );
+      const scopedApplications = bootstrap.filter(
+        (document) =>
+          document.kind === "Application" &&
+          document.spec?.project === projectName,
+      );
+      assert.deepEqual(
+        [...new Set(scopedProject.spec.sourceRepos)].sort(),
+        [
+          ...new Set(
+            scopedApplications.map(
+              (application) => application.spec.source.repoURL,
+            ),
+          ),
+        ].sort(),
+      );
+      assert.deepEqual(
+        scopedProject.spec.destinations
+          .map((destination: any) => destination.namespace)
+          .sort(),
+        [
+          ...new Set(
+            scopedApplications.map(
+              (application) => application.spec.destination.namespace,
+            ),
+          ),
+        ].sort(),
+      );
+      const authorizedApplications = scopedProject.spec.roles.flatMap(
+        (role: any) =>
+          (role.policies ?? []).map(
+            (policy: string) => policy.split(",")[4].trim().split("/")[1],
+          ),
+      );
+      assert.deepEqual(
+        [...new Set(authorizedApplications)].sort(),
+        scopedApplications
+          .map((application) => application.metadata.name)
+          .sort(),
+      );
+    }
+    const tenantDelivery = bootstrap.find(
+      (document) =>
+        document.kind === "AppProject" &&
+        document.metadata?.name === "tenant-delivery",
+    );
+    assert.deepEqual(
+      tenantDelivery.spec.destinations.map(
+        (destination: any) => destination.namespace,
+      ),
+      [clusterRole === "platform" ? "workloads" : "execution"],
+    );
+  }
+});
+
+test("Pulumi Argo CD handoffs align the qualified chart and immutable role entrypoints", () => {
+  const revisions = new Set<string>();
+  const chartVersions = new Set<string>();
+  for (const environment of ["dev", "staging", "prod"]) {
+    const overlayEnvironment =
+      environment === "prod" ? "production" : environment;
+    for (const clusterRole of ["platform", "execution"]) {
+      const file = `Pulumi.argocd-${clusterRole}-${environment}.yaml.example`;
+      const document = parseAllDocuments(
+        readFileSync(file, "utf8"),
+      )[0].toJSON();
+      const config = document.config["secure-saas-infra:argocd"];
+      assert.equal(config.clusterRole, clusterRole);
+      assert.equal(config.clusterName, `${clusterRole}-${environment}`);
+      assert.equal(
+        config.bootstrap.repository,
+        "https://github.com/codefly-dev/secure-saas-infra.git",
+      );
+      assert.match(config.bootstrap.revision, /^[a-f0-9]{40}$/);
+      assert.equal(
+        config.bootstrap.entrypoint,
+        `gitops/bootstrap/argocd/overlays/${overlayEnvironment}/${clusterRole}`,
+      );
+      assert.doesNotThrow(() =>
+        execFileSync("git", [
+          "cat-file",
+          "-e",
+          `${config.bootstrap.revision}:${config.bootstrap.entrypoint}/kustomization.yaml`,
+        ]),
+      );
+      const rendered = parseAllDocuments(
+        execFileSync("kubectl", ["kustomize", config.bootstrap.entrypoint], {
+          encoding: "utf8",
+        }),
+      )
+        .map((entry) => entry.toJSON() as any)
+        .filter(Boolean);
+      const baseline = rendered.find(
+        (entry) =>
+          entry.kind === "Application" &&
+          entry.metadata?.name === `${clusterRole}-cluster-baseline`,
+      );
+      assert.match(baseline.spec.source.targetRevision, /^[a-f0-9]{40}$/);
+      assert.doesNotThrow(() =>
+        execFileSync("git", [
+          "cat-file",
+          "-e",
+          `${baseline.spec.source.targetRevision}:${baseline.spec.source.path}/kustomization.yaml`,
+        ]),
+      );
+      revisions.add(config.bootstrap.revision);
+      chartVersions.add(config.chartVersion);
+    }
+  }
+  assert.deepEqual(
+    [...revisions],
+    ["1d4c55a3bff945522c456179739aabcc67395539"],
+  );
+  assert.deepEqual([...chartVersions], ["10.2.1"]);
+});
+
+test("Argo CD qualification binds the chart artifact and proves two-cluster reconciliation", () => {
+  const packageConfig = JSON.parse(readFileSync("package.json", "utf8"));
+  const workflow = readFileSync(".github/workflows/platform-ci.yml", "utf8");
+  const values = readFileSync("src/argocdValues.ts", "utf8");
+  const chart = readFileSync("scripts/qualify-argocd-chart.mjs", "utf8");
+  const twoCluster = readFileSync(
+    "scripts/validate-argocd-cluster-roles.mjs",
+    "utf8",
+  );
+  assert.match(values, /ARGOCD_CHART_VERSION = "10\.2\.1"/);
+  assert.match(
+    values,
+    /27e930e366d22c999002008ad5ec7961bda00410a84287210d0fffbee8150885/,
+  );
+  for (const source of [chart, twoCluster]) {
+    assert.match(source, /loadArgocdValues\(workingDirectory\)/);
+    assert.match(source, /sha256\(chart\) !== CHART_DIGEST/);
+  }
+  assert.match(chart, /databaseArgocdHelmValues\(\)/);
+  assert.match(chart, /argocdHelmValues\(controllerConfig\(clusterRole\)\)/);
+  assert.match(chart, /qualifyMonitoringIntegration\(controllerConfig\)/);
+  assert.match(
+    chart,
+    /kube-prometheus-stack\.application\.yaml[\s\S]*renderedMonitoringKinds/,
+  );
+  assert.match(twoCluster, /installArgocd/);
+  assert.match(twoCluster, /cpSync\("gitops"/);
+  assert.match(twoCluster, /renderRoleInventory/);
+  assert.match(twoCluster, /qualificationOperatorResources/);
+  assert.match(twoCluster, /stringifyResourceReferences\(owned\)/);
+  assert.match(
+    twoCluster,
+    /kubectl\(cluster, \["apply", "-f", "-"\], joinDocuments\(rendered\)\)/,
+  );
+  assert.doesNotMatch(twoCluster, /role-proof/);
+  assert.match(twoCluster, /host\.docker\.internal:host-gateway/);
+  assert.match(twoCluster, /mainValues\.global\.hostAliases/);
+  assert.match(twoCluster, /ip: cluster\.hostGateway/);
+  assert.match(twoCluster, /status\.sync\?\.status === "Synced"/);
+  assert.match(twoCluster, /status\.health\?\.status === "Healthy"/);
+  assert.match(twoCluster, /forbiddenResources \|\|\s+forbiddenApplication/);
+  assert.match(twoCluster, /runOptional\("docker", \["rm", "-f"/);
+  assert.equal(
+    packageConfig.scripts["platform:validate:source"],
+    "npm run platform:test && npm run platform:validate:gitops && npm run platform:qualify:argocd-chart",
+  );
+  assert.match(workflow, /npm run platform:validate:source/);
+  assert.match(workflow, /npm run platform:qualify:argocd-two-cluster/);
+  assert.equal((workflow.match(/fetch-depth: 0/g) ?? []).length, 2);
 });
 
 test("all GitOps overlays render", () => {
@@ -303,7 +580,7 @@ test("all GitOps overlays render", () => {
 test("Argo AppProjects deny default authority and bind every Application to an exact boundary", () => {
   const rendered = execFileSync(
     "kubectl",
-    ["kustomize", "gitops/bootstrap/argocd"],
+    ["kustomize", "gitops/bootstrap/argocd/overlays/dev/platform"],
     { encoding: "utf8" },
   );
   const documents = parseAllDocuments(rendered)
@@ -350,6 +627,21 @@ test("Argo AppProjects deny default authority and bind every Application to an e
     "apiextensions.k8s.io/CustomResourceDefinition",
   ]) {
     assert.equal(tenantKinds.has(forbidden), false, forbidden);
+  }
+  const platformOperatorKinds = new Set(
+    projects
+      .get("platform-operators")
+      .spec.namespaceResourceWhitelist.map(
+        (resource: any) => `${resource.group}/${resource.kind}`,
+      ),
+  );
+  for (const required of [
+    "monitoring.coreos.com/Alertmanager",
+    "monitoring.coreos.com/Prometheus",
+    "monitoring.coreos.com/PrometheusRule",
+    "monitoring.coreos.com/ServiceMonitor",
+  ]) {
+    assert.equal(platformOperatorKinds.has(required), true, required);
   }
   const databaseInfrastructure = projects.get("database-infrastructure").spec;
   assert.deepEqual(
@@ -400,10 +692,143 @@ test("Argo AppProjects deny default authority and bind every Application to an e
       "ServerSideApply=true",
     ].sort(),
   );
+
+  const execution = parseAllDocuments(
+    execFileSync(
+      "kubectl",
+      ["kustomize", "gitops/bootstrap/argocd/overlays/dev/execution"],
+      { encoding: "utf8" },
+    ),
+  )
+    .map((document) => document.toJSON() as any)
+    .filter(Boolean);
+  assert.equal(
+    execution.some(
+      (document) =>
+        document.metadata?.name === "database-infrastructure" ||
+        document.metadata?.name === "database-infrastructure-handoff",
+    ),
+    false,
+  );
+});
+
+test("the monitoring stack creates Argo CD ServiceMonitors after installing their CRD", () => {
+  const application = parseAllDocuments(
+    readFileSync(
+      "gitops/bootstrap/argocd/base/apps/kube-prometheus-stack.application.yaml",
+      "utf8",
+    ),
+  )[0].toJSON() as any;
+  const monitors =
+    application.spec.source.helm.valuesObject.prometheus
+      .additionalServiceMonitors;
+  assert.deepEqual(monitors.map((monitor: any) => monitor.name).sort(), [
+    "argocd-application-controller",
+    "argocd-applicationset-controller",
+    "argocd-repo-server",
+    "argocd-server",
+  ]);
+  for (const monitor of monitors) {
+    assert.deepEqual(monitor.namespaceSelector.matchNames, ["argocd"]);
+    assert.equal(monitor.endpoints[0].port, "http-metrics");
+    assert.equal(monitor.endpoints[0].path, "/metrics");
+    assert.equal(
+      monitor.selector.matchLabels["app.kubernetes.io/instance"],
+      "argocd",
+    );
+  }
 });
 
 test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository, and resource-scope escalation", () => {
   const cases: Array<[string, (root: string) => void, RegExp]> = [
+    [
+      "second role Application",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/roles/execution/kustomization.yaml",
+          ),
+          (documents) => {
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.name ===
+                "(argo-rollouts|cert-manager|database-infrastructure-handoff|external-dns|gateway-api-crds|istio-ingress-gateway|platform-cluster-baseline|tailscale-operator|vault|vault-secrets-operator)",
+            );
+            patch.target.name =
+              "(argo-rollouts|cert-manager|database-infrastructure-handoff|external-dns|gateway-api-crds|istio-ingress-gateway|tailscale-operator|vault|vault-secrets-operator)";
+          },
+        ),
+      /overlapping Argo ownership/,
+    ],
+    [
+      "overlapping Argo ownership",
+      (root) => {
+        const entrypoint = path.join(
+          root,
+          "bootstrap/argocd/overlays/dev/platform",
+        );
+        writeFileSync(
+          path.join(entrypoint, "duplicate-owner.application.yaml"),
+          `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: duplicate-platform-owner
+  namespace: argocd
+spec:
+  project: bootstrap
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform
+  source:
+    repoURL: https://github.com/codefly-dev/secure-saas-infra.git
+    targetRevision: 1b932460fb825745fdc0a6d8c23fbdf5d196f1bb
+    path: gitops/overlays/dev/platform
+`,
+        );
+        mutateYaml(path.join(entrypoint, "kustomization.yaml"), (documents) => {
+          documents[0].resources.push("duplicate-owner.application.yaml");
+        });
+      },
+      /overlapping Argo ownership/,
+    ],
+    [
+      "cross-role operator authority",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/roles/execution/kustomization.yaml",
+          ),
+          (documents) => {
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.kind === "AppProject" &&
+                candidate.target?.name === "platform-operators",
+            );
+            patch.patch = patch.patch.replace(
+              "      namespace: observability",
+              "      namespace: observability\n    - server: https://kubernetes.default.svc\n      namespace: tailscale",
+            );
+          },
+        ),
+      /platform-operators role-specific destinations/,
+    ],
+    [
+      "remote destination substitution",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/base/execution-cluster-baseline.application.yaml",
+          ),
+          (documents) => {
+            documents[0].spec.destination.server =
+              "https://remote.example.invalid";
+          },
+        ),
+      /remote destination substitution denied/,
+    ],
     [
       "default project",
       (root) =>
@@ -463,15 +888,17 @@ test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository
       "baseline privilege",
       (root) =>
         mutateYaml(
-          path.join(root, "bootstrap/argocd/base/projects.appproject.yaml"),
+          path.join(root, "bootstrap/argocd/roles/platform/kustomization.yaml"),
           (documents) => {
-            project(documents, "bootstrap").spec.clusterResourceWhitelist =
-              project(
-                documents,
-                "bootstrap",
-              ).spec.clusterResourceWhitelist.filter(
-                (resource: any) => resource.kind !== "Namespace",
-              );
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.kind === "AppProject" &&
+                candidate.target?.name === "bootstrap",
+            );
+            patch.patch = patch.patch.replace(
+              '    - group: ""\n      kind: Namespace\n',
+              "",
+            );
           },
         ),
       /resource '\/Namespace' is outside AppProject 'bootstrap'/,
@@ -480,10 +907,17 @@ test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository
       "unsafe Casbin verb",
       (root) =>
         mutateYaml(
-          path.join(root, "bootstrap/argocd/base/projects.appproject.yaml"),
+          path.join(root, "bootstrap/argocd/roles/platform/kustomization.yaml"),
           (documents) => {
-            project(documents, "bootstrap").spec.roles[0].policies[0] =
-              "p, proj:bootstrap:bootstrap-sync, applications, delete, bootstrap/platform-cluster-baseline, allow";
+            const patch = documents[0].patches.find(
+              (candidate: any) =>
+                candidate.target?.kind === "AppProject" &&
+                candidate.target?.name === "bootstrap",
+            );
+            patch.patch = patch.patch.replace(
+              "applications, get",
+              "applications, delete",
+            );
           },
         ),
       /unsafe Casbin tuple/,
@@ -506,10 +940,24 @@ test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository
         mutateYaml(
           path.join(
             root,
-            "bootstrap/argocd/overlays/production/platform-application-patch.yaml",
+            "bootstrap/argocd/overlays/production/platform/platform-application-patch.yaml",
           ),
           (documents) => {
             documents[0].spec.source.targetRevision = "main";
+          },
+        ),
+      /immutable platform cluster-baseline|unsafe target revision/,
+    ],
+    [
+      "mutable production Helm revision",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/base/apps/kube-prometheus-stack.application.yaml",
+          ),
+          (documents) => {
+            documents[0].spec.source.targetRevision = "latest";
           },
         ),
       /unsafe target revision/,
@@ -593,12 +1041,12 @@ test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository
       (root) => {
         const file = path.join(
           root,
-          "bootstrap/argocd/overlays/dev/kustomization.yaml",
+          "bootstrap/argocd/overlays/dev/platform/kustomization.yaml",
         );
         const value = readFileSync(file, "utf8");
         writeFileSync(file, `${value}\n  - missing-resource.yaml\n`);
       },
-      /failed to render.*overlays\/dev/s,
+      /failed to render.*overlays\/dev\/platform/s,
     ],
   ];
   for (const [label, mutate, expected] of cases) {
@@ -629,6 +1077,18 @@ function mutateYaml(file: string, mutate: (documents: any[]) => void) {
     file,
     `${documents.map((document) => stringify(document).trim()).join("\n---\n")}\n`,
   );
+}
+
+function renderKustomization(directory: string) {
+  return parseAllDocuments(
+    execFileSync("kubectl", ["kustomize", directory], { encoding: "utf8" }),
+  )
+    .map((document) => document.toJSON() as any)
+    .filter(Boolean);
+}
+
+function oppositeClusterRole(clusterRole: "platform" | "execution") {
+  return clusterRole === "platform" ? "execution" : "platform";
 }
 
 function project(documents: any[], name: string): any {

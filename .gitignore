@@ -6,6 +6,7 @@ dist-management-seed/
 dist-management-seed-policy/
 dist-management-seed-support/
 dist-management-seed-test/
+dist-platform-test/
 artifacts/
 .pulumi/
 *.tsbuildinfo

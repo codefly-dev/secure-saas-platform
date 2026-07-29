@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../kyverno
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: role-specific
+      kind: role-specific
+      metadata:
+        name: platform-only
+    target:
+      group: (kyverno.io|admissionregistration.k8s.io)
+      name: (authorize-database-infrastructure-controller|database-controller-native-ownership|database-controller-native-scope|database-replicaset-controller-identity|database-workload-native-boundary|require-agent-audit)
+  - patch: |-
+      - op: replace
+        path: /spec/matchConditions/0/expression
+        value: >-
+          request.namespace in ['execution', 'security']
+    target:
+      group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+      name: restricted-workload-native-baseline

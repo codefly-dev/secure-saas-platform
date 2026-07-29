@@ -7,4 +7,3 @@ spec:
     namespace: codefly-db-runtime-warden-saas-postgres-production
   source:
     path: gitops/generated/database/production
-    targetRevision: v0.1.0

@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../istio-security
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: security.istio.io/v1
+      kind: role-specific
+      metadata:
+        name: execution-only
+        namespace: execution
+    target:
+      group: security.istio.io
+      namespace: execution

@@ -7,4 +7,3 @@ spec:
     namespace: codefly-db-runtime-warden-saas-postgres-staging
   source:
     path: gitops/generated/database/staging
-    targetRevision: staging

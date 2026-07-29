@@ -11,13 +11,15 @@ config:
     clusterStackRef: your-pulumi-org/secure-saas-infra/platform-prod
     # Key in the cluster stack's eksClusters output (matches the spoke name).
     clusterName: platform-prod
+    clusterRole: platform
     clusterAccessRoleArn: arn:aws:iam::<set-platform-prod-account-id-after-organization-creation>:role/InfrastructureApplyProd-Workload
     argocdHostname: argocd-platform-prod.mind.example
-    chartVersion: "8.4.0"
+    chartVersion: "10.2.1"
+    bootstrap:
+      repository: https://github.com/codefly-dev/secure-saas-infra.git
+      revision: 1d4c55a3bff945522c456179739aabcc67395539
+      entrypoint: gitops/bootstrap/argocd/overlays/production/platform
     oidcIssuer: https://identity.mind.example
     oidcClientId: argocd-platform-prod
     oidcClientSecretRef: $oidc.organization.clientSecret
     oidcAdminGroup: deus:infra:admins
-    # Bootstrap directory relative to the Pulumi run cwd. The Argo CD
-    # stack must run from the repo root so this resolves to gitops/...
-    bootstrapDirectory: gitops/bootstrap/argocd/overlays/production

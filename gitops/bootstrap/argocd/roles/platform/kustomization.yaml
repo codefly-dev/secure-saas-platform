@@ -1,0 +1,82 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: execution-cluster-baseline
+    target:
+      kind: Application
+      name: execution-cluster-baseline
+  - patch: |-
+      - op: replace
+        path: /spec/destinations
+        value:
+          - server: https://kubernetes.default.svc
+            namespace: agent-broker
+          - server: https://kubernetes.default.svc
+            namespace: agent-egress
+          - server: https://kubernetes.default.svc
+            namespace: istio-system
+          - server: https://kubernetes.default.svc
+            namespace: kube-system
+          - server: https://kubernetes.default.svc
+            namespace: platform
+          - server: https://kubernetes.default.svc
+            namespace: security
+          - server: https://kubernetes.default.svc
+            namespace: tailscale
+          - server: https://kubernetes.default.svc
+            namespace: workloads
+      - op: replace
+        path: /spec/roles/0/description
+        value: Sync only the platform cluster baseline Application.
+      - op: replace
+        path: /spec/roles/0/policies
+        value:
+          - p, proj:bootstrap:bootstrap-sync, applications, get, bootstrap/platform-cluster-baseline, allow
+          - p, proj:bootstrap:bootstrap-sync, applications, sync, bootstrap/platform-cluster-baseline, allow
+      - op: replace
+        path: /spec/clusterResourceWhitelist
+        value:
+          - group: ""
+            kind: Namespace
+          - group: kyverno.io
+            kind: ClusterPolicy
+          - group: admissionregistration.k8s.io
+            kind: ValidatingAdmissionPolicy
+          - group: admissionregistration.k8s.io
+            kind: ValidatingAdmissionPolicyBinding
+      - op: replace
+        path: /spec/namespaceResourceWhitelist
+        value:
+          - group: ""
+            kind: ConfigMap
+          - group: ""
+            kind: ServiceAccount
+          - group: networking.k8s.io
+            kind: NetworkPolicy
+          - group: security.istio.io
+            kind: AuthorizationPolicy
+          - group: security.istio.io
+            kind: PeerAuthentication
+          - group: tailscale.com
+            kind: Connector
+          - group: telemetry.istio.io
+            kind: Telemetry
+    target:
+      kind: AppProject
+      name: bootstrap
+  - patch: |-
+      - op: replace
+        path: /spec/destinations
+        value:
+          - server: https://kubernetes.default.svc
+            namespace: workloads
+    target:
+      kind: AppProject
+      name: tenant-delivery

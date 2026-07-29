@@ -1,16 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../base
+  - ../../../roles/platform
 patches:
   - path: platform-application-patch.yaml
     target:
       kind: Application
       name: platform-cluster-baseline
-  - path: execution-application-patch.yaml
-    target:
-      kind: Application
-      name: execution-cluster-baseline
   - path: database-infrastructure-project-patch.yaml
     target:
       kind: AppProject

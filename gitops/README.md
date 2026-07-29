@@ -18,14 +18,16 @@ The `clusters/*/kustomization.yaml` files are the cluster entry points.
 
 Environment overlays live under `gitops/overlays/<environment>/<cluster-role>`.
 
-Bootstrap overlays live under `gitops/bootstrap/argocd/overlays/<environment>` and create two cluster baseline Applications:
+Bootstrap entrypoints live under
+`gitops/bootstrap/argocd/overlays/<environment>/<cluster-role>`. Each
+entrypoint creates exactly one cluster baseline Application for its target:
 
 - `platform-cluster-baseline`
 - `execution-cluster-baseline`
 
-Use `gitops/bootstrap/argocd` as the default dev bootstrap, or point Argo CD at a specific environment overlay:
+Always select both the environment and role:
 
 ```sh
-kubectl apply -k gitops/bootstrap/argocd/overlays/staging
-kubectl apply -k gitops/bootstrap/argocd/overlays/production
+kubectl apply -k gitops/bootstrap/argocd/overlays/staging/platform
+kubectl apply -k gitops/bootstrap/argocd/overlays/staging/execution
 ```
