@@ -554,6 +554,8 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   );
   assert.doesNotMatch(twoCluster, /role-proof/);
   assert.match(twoCluster, /host\.docker\.internal:host-gateway/);
+  assert.match(twoCluster, /mainValues\.global\.hostAliases/);
+  assert.match(twoCluster, /ip: cluster\.hostGateway/);
   assert.match(twoCluster, /status\.sync\?\.status === "Synced"/);
   assert.match(twoCluster, /status\.health\?\.status === "Healthy"/);
   assert.match(twoCluster, /forbiddenResources \|\|\s+forbiddenApplication/);

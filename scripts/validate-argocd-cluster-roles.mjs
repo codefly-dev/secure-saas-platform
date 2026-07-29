@@ -279,25 +279,35 @@ function startCluster(role) {
     "--all",
     "--timeout=120s",
   ]);
-  return { name, kubeconfig };
+  const hostEntry = run("docker", ["exec", name, "cat", "/etc/hosts"])
+    .stdout.split("\n")
+    .find((line) => line.trim().endsWith("host.docker.internal"));
+  const hostGateway = hostEntry?.trim().split(/\s+/)[0];
+  if (!hostGateway) {
+    throw new Error(
+      `Cannot resolve the ${role} cluster's Docker host gateway.`,
+    );
+  }
+  return { name, kubeconfig, hostGateway };
 }
 
 function installArgocd(cluster, role) {
   const values = path.join(workingDirectory, `argocd-${role}-values.yaml`);
-  writeFileSync(
-    values,
-    stringify(
-      argocdHelmValues({
-        clusterRole: role,
-        argocdHostname: `argocd-${role}.qualification.invalid`,
-        oidcIssuer: "https://identity.qualification.invalid",
-        oidcClientId: `argocd-${role}`,
-        oidcClientSecretRef: "$oidc.organization.clientSecret",
-        oidcAdminGroup: "deus:infra:admins",
-      }),
-    ),
-    { mode: 0o600 },
-  );
+  const mainValues = argocdHelmValues({
+    clusterRole: role,
+    argocdHostname: `argocd-${role}.qualification.invalid`,
+    oidcIssuer: "https://identity.qualification.invalid",
+    oidcClientId: `argocd-${role}`,
+    oidcClientSecretRef: "$oidc.organization.clientSecret",
+    oidcAdminGroup: "deus:infra:admins",
+  });
+  mainValues.global.hostAliases = [
+    {
+      ip: cluster.hostGateway,
+      hostnames: ["host.docker.internal"],
+    },
+  ];
+  writeFileSync(values, stringify(mainValues), { mode: 0o600 });
   run("helm", [
     "--kubeconfig",
     cluster.kubeconfig,
@@ -318,7 +328,16 @@ function installArgocd(cluster, role) {
       workingDirectory,
       "argocd-database-values.yaml",
     );
-    writeFileSync(databaseValues, stringify(databaseArgocdHelmValues()), {
+    const infrastructureValues = databaseArgocdHelmValues();
+    infrastructureValues.global = {
+      hostAliases: [
+        {
+          ip: cluster.hostGateway,
+          hostnames: ["host.docker.internal"],
+        },
+      ],
+    };
+    writeFileSync(databaseValues, stringify(infrastructureValues), {
       mode: 0o600,
     });
     run("helm", [
