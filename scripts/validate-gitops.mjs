@@ -328,8 +328,10 @@ function validateArgoBoundary(documents, label, identity) {
       source.targetRevision === "HEAD" ||
       source.targetRevision.includes("*") ||
       (source.repoURL ===
-        "https://github.com/codefly-dev/secure-saas-infra.git" &&
-        !/^[a-f0-9]{40}$/.test(source.targetRevision)) ||
+        "https://github.com/codefly-dev/secure-saas-platform.git" &&
+        !/^(?:[a-f0-9]{40}|v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
+          source.targetRevision,
+        )) ||
       (label.includes("overlays/production") &&
         ([
           "main",
@@ -469,10 +471,12 @@ function validateRoleInventory(documents, label, identity, renderedByOverlay) {
     baseline.metadata?.name !== `${identity.clusterRole}-cluster-baseline` ||
     baseline.spec?.project !== "bootstrap" ||
     baseline.spec?.source?.repoURL !==
-      "https://github.com/codefly-dev/secure-saas-infra.git" ||
+      "https://github.com/codefly-dev/secure-saas-platform.git" ||
     baseline.spec?.source?.path !==
       `gitops/overlays/${identity.environment}/${identity.clusterRole}` ||
-    !/^[a-f0-9]{40}$/.test(baseline.spec?.source?.targetRevision ?? "") ||
+    !/^(?:[a-f0-9]{40}|v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.test(
+      baseline.spec?.source?.targetRevision ?? "",
+    ) ||
     baseline.spec?.destination?.server !== "https://kubernetes.default.svc" ||
     baseline.spec?.destination?.namespace !== identity.clusterRole
   ) {
@@ -513,7 +517,7 @@ function validateArgoOwnership(applications, label, renderedByOverlay) {
 
     if (
       source.repoURL !==
-        "https://github.com/codefly-dev/secure-saas-infra.git" ||
+        "https://github.com/codefly-dev/secure-saas-platform.git" ||
       !/^gitops\/overlays\/(?:dev|staging|production)\/(?:platform|execution)$/.test(
         source.path ?? "",
       )
@@ -571,7 +575,7 @@ function validateDatabaseInfrastructureApplication(
       "infrastructure-controller" ||
     application.spec?.project !== "database-infrastructure" ||
     application.spec?.source?.repoURL !==
-      "https://github.com/codefly-dev/secure-saas-infra.git" ||
+      "https://github.com/codefly-dev/secure-saas-platform.git" ||
     application.spec?.source?.path !==
       `gitops/generated/database/${environment}` ||
     application.spec?.destination?.server !==

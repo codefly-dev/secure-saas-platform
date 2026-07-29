@@ -2,13 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const directory = path.resolve(
@@ -18,7 +12,6 @@ const directory = path.resolve(
 const reportPath = path.join(directory, "report.json");
 
 test("disposable-cluster verifier rejects tampering across every evidence boundary", () => {
-  ensureBuild();
   const expectationsResult = spawnSync(
     process.execPath,
     ["scripts/verify-disposable-cluster-report.mjs", "--print-expectations"],
@@ -167,7 +160,7 @@ function createReport(expectations: any): any {
     completedAt: new Date().toISOString(),
     durationMs: 1000,
     pass: true,
-    runId: "secure-saas-infra-g5-1-00000000",
+    runId: "secure-saas-platform-g5-1-00000000",
     scope: expectations.scope,
     source: {
       revision: git(["rev-parse", "HEAD"]),
@@ -217,15 +210,6 @@ function verify(extra: string[] = []) {
     ],
     { cwd: process.cwd(), encoding: "utf8" },
   );
-}
-
-function ensureBuild(): void {
-  if (existsSync("dist/databaseAccess.js")) return;
-  const result = spawnSync("npm", ["run", "build", "--silent"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 0, result.stderr);
 }
 
 function bindDigest(report: any): void {

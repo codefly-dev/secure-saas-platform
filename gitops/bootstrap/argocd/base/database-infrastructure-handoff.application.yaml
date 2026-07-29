@@ -12,9 +12,9 @@ spec:
     server: https://kubernetes.default.svc
     namespace: codefly-db-runtime-warden-saas-postgres-development
   source:
-    repoURL: https://github.com/codefly-dev/secure-saas-infra.git
+    repoURL: https://github.com/codefly-dev/secure-saas-platform.git
     path: gitops/generated/database/development
-    targetRevision: f8db9f296c4cd9f90c8078f3fbfe0a1cfccd9891
+    targetRevision: v0.1.0
   syncPolicy:
     syncOptions:
       - CreateNamespace=false

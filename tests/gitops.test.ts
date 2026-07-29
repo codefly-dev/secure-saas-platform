@@ -299,7 +299,10 @@ test("Argo CD bootstrap entrypoints render one immutable cluster role", () => {
         baselines[0].spec.source.path,
         `gitops/overlays/${environment}/${clusterRole}`,
       );
-      assert.match(baselines[0].spec.source.targetRevision, /^[a-f0-9]{40}$/);
+      assert.match(
+        baselines[0].spec.source.targetRevision,
+        /^(?:[a-f0-9]{40}|v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/,
+      );
       assert.equal(
         baselines[0].spec.destination.server,
         "https://kubernetes.default.svc",
@@ -457,67 +460,6 @@ test("cluster baselines own only namespaces and bootstrap authority assigned to 
   }
 });
 
-test("Pulumi Argo CD handoffs align the qualified chart and immutable role entrypoints", () => {
-  const revisions = new Set<string>();
-  const chartVersions = new Set<string>();
-  for (const environment of ["dev", "staging", "prod"]) {
-    const overlayEnvironment =
-      environment === "prod" ? "production" : environment;
-    for (const clusterRole of ["platform", "execution"]) {
-      const file = `Pulumi.argocd-${clusterRole}-${environment}.yaml.example`;
-      const document = parseAllDocuments(
-        readFileSync(file, "utf8"),
-      )[0].toJSON();
-      const config = document.config["secure-saas-infra:argocd"];
-      assert.equal(config.clusterRole, clusterRole);
-      assert.equal(config.clusterName, `${clusterRole}-${environment}`);
-      assert.equal(
-        config.bootstrap.repository,
-        "https://github.com/codefly-dev/secure-saas-infra.git",
-      );
-      assert.match(config.bootstrap.revision, /^[a-f0-9]{40}$/);
-      assert.equal(
-        config.bootstrap.entrypoint,
-        `gitops/bootstrap/argocd/overlays/${overlayEnvironment}/${clusterRole}`,
-      );
-      assert.doesNotThrow(() =>
-        execFileSync("git", [
-          "cat-file",
-          "-e",
-          `${config.bootstrap.revision}:${config.bootstrap.entrypoint}/kustomization.yaml`,
-        ]),
-      );
-      const rendered = parseAllDocuments(
-        execFileSync("kubectl", ["kustomize", config.bootstrap.entrypoint], {
-          encoding: "utf8",
-        }),
-      )
-        .map((entry) => entry.toJSON() as any)
-        .filter(Boolean);
-      const baseline = rendered.find(
-        (entry) =>
-          entry.kind === "Application" &&
-          entry.metadata?.name === `${clusterRole}-cluster-baseline`,
-      );
-      assert.match(baseline.spec.source.targetRevision, /^[a-f0-9]{40}$/);
-      assert.doesNotThrow(() =>
-        execFileSync("git", [
-          "cat-file",
-          "-e",
-          `${baseline.spec.source.targetRevision}:${baseline.spec.source.path}/kustomization.yaml`,
-        ]),
-      );
-      revisions.add(config.bootstrap.revision);
-      chartVersions.add(config.chartVersion);
-    }
-  }
-  assert.deepEqual(
-    [...revisions],
-    ["1d4c55a3bff945522c456179739aabcc67395539"],
-  );
-  assert.deepEqual([...chartVersions], ["10.2.1"]);
-});
-
 test("Argo CD qualification binds the chart artifact and proves two-cluster reconciliation", () => {
   const packageConfig = JSON.parse(readFileSync("package.json", "utf8"));
   const workflow = readFileSync(".github/workflows/platform-ci.yml", "utf8");
@@ -556,17 +498,48 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   assert.match(twoCluster, /host\.docker\.internal:host-gateway/);
   assert.match(twoCluster, /mainValues\.global\.hostAliases/);
   assert.match(twoCluster, /ip: cluster\.hostGateway/);
+  assert.match(twoCluster, /status\.sync\?\.revision === revision/);
   assert.match(twoCluster, /status\.sync\?\.status === "Synced"/);
   assert.match(twoCluster, /status\.health\?\.status === "Healthy"/);
   assert.match(twoCluster, /forbiddenResources \|\|\s+forbiddenApplication/);
   assert.match(twoCluster, /runOptional\("docker", \["rm", "-f"/);
   assert.equal(
-    packageConfig.scripts["platform:validate:source"],
-    "npm run platform:test && npm run platform:validate:gitops && npm run platform:qualify:argocd-chart",
+    packageConfig.scripts.check,
+    "npm run format:check && npm run test && npm run validate:gitops && npm run qualify:argocd-chart",
   );
-  assert.match(workflow, /npm run platform:validate:source/);
-  assert.match(workflow, /npm run platform:qualify:argocd-two-cluster/);
+  assert.match(workflow, /npm run check/);
+  assert.match(workflow, /npm run qualify:argocd-two-cluster/);
+  assert.match(workflow, /architecture: \[amd64, arm64\]/);
   assert.equal((workflow.match(/fetch-depth: 0/g) ?? []).length, 2);
+});
+
+test("release ownership protects reviewed source and records production health", () => {
+  const owners = readFileSync(".github/CODEOWNERS", "utf8");
+  const governance = JSON.parse(
+    readFileSync(".github/repository-governance.json", "utf8"),
+  );
+  const promotion = readFileSync(
+    ".github/workflows/production-promotion.yml",
+    "utf8",
+  );
+  const release = readFileSync(".github/workflows/release.yml", "utf8");
+  assert.match(owners, /\* @codefly-dev\/platform-security/);
+  assert.equal(governance.defaultBranch.requireCodeOwnerReview, true);
+  assert.deepEqual(governance.defaultBranch.requiredStatusChecks, [
+    "Platform source qualification",
+    "Argo CD exact reconciliation (amd64)",
+    "Argo CD exact reconciliation (arm64)",
+  ]);
+  assert.equal(governance.releaseTags.allowUpdates, false);
+  assert.equal(governance.releaseTags.allowDeletions, false);
+  assert.match(promotion, /environment: production/);
+  assert.match(promotion, /promotion:verify-source/);
+  assert.match(promotion, /verify-platform-iac-handoff/);
+  assert.match(promotion, /--execute/);
+  assert.match(promotion, /promotion:evidence/);
+  assert.match(promotion, /retention-days: 365/);
+  assert.match(release, /refs\/remotes\/origin\/main/);
+  assert.match(release, /npm run check/);
 });
 
 test("all GitOps overlays render", () => {
@@ -781,7 +754,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: platform
   source:
-    repoURL: https://github.com/codefly-dev/secure-saas-infra.git
+    repoURL: https://github.com/codefly-dev/secure-saas-platform.git
     targetRevision: 1b932460fb825745fdc0a6d8c23fbdf5d196f1bb
     path: gitops/overlays/dev/platform
 `,

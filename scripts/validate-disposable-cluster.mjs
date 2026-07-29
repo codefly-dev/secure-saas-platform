@@ -12,14 +12,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parse as parseYaml, stringify } from "yaml";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-
-let databaseAccessCompiler;
 
 const K3S_DIGEST =
   "rancher/k3s@sha256:f17e43023cce2b9c613e198f26e73637bf734b5156d37c9f44819d97bac4d655";
@@ -78,8 +75,8 @@ const EXPECTED_KYVERNO_IMAGES = Object.freeze([
 
 const startedAt = Date.now();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const runId = `secure-saas-infra-g5-${process.pid}-${randomBytes(4).toString("hex")}`;
-const fixtureRuntimeImage = `docker.io/library/secure-saas-infra-g5:${runId}`;
+const runId = `secure-saas-platform-g5-${process.pid}-${randomBytes(4).toString("hex")}`;
+const fixtureRuntimeImage = `docker.io/library/secure-saas-platform-g5:${runId}`;
 const reportPath = safeOutputPath(
   parseArguments(process.argv.slice(2)).output ??
     "artifacts/disposable-cluster-validation.json",
@@ -242,8 +239,7 @@ function recordInputs() {
     "gitops/base/kyverno/database-native-admission.yaml",
     "gitops/base/kyverno/workload-native-admission.yaml",
     "gitops/base/namespaces/restricted-default-serviceaccounts.yaml",
-    "src/databaseAccess.ts",
-    "dist/databaseAccess.js",
+    "fixtures/database-admission-v1.json",
     "scripts/validate-disposable-cluster.mjs",
     "scripts/verify-disposable-cluster-report.mjs",
     "schemas/disposable-cluster-validation-v1.schema.json",
@@ -266,7 +262,7 @@ function startCluster() {
     "--name",
     containerName,
     "--label",
-    `${OWNER_LABEL}=secure-saas-infra-g5`,
+    `${OWNER_LABEL}=secure-saas-platform-g5`,
     "--label",
     `${RUN_LABEL}=${runId}`,
     "--tmpfs",
@@ -767,59 +763,23 @@ function validateDatabaseAccessAdmission() {
       },
     ],
   });
-  databaseAccessCompiler ??= createRequire(import.meta.url)(
-    "../dist/databaseAccess.js",
+  const fixtureDocument = JSON.parse(
+    readFileSync("fixtures/database-admission-v1.json", "utf8"),
   );
-  const { awsDatabaseAccessReservationKey, compileAwsDatabaseAdmissionPolicy } =
-    databaseAccessCompiler;
-  const bindingId = "k3s-postgres";
-  const fixtures = ["runtime", "migration", "bootstrap"].map((accessClass) => {
-    const namespace = `database-${accessClass}`;
-    const serviceAccount = `database-${accessClass}`;
-    const nodePoolName = `${bindingId}-${accessClass}-database-access`;
-    const bindingDigest = sha256(`database-${accessClass}-binding`);
-    const bindingLabels = {
-      "security.deus.dev/workload-identity-binding": serviceAccount,
-    };
-    const reservationKey = awsDatabaseAccessReservationKey(
-      bindingId,
-      accessClass,
+  const fixtures = fixtureDocument.fixtures;
+  if (
+    fixtureDocument.apiVersion !==
+      "qualification.deus.dev/database-admission-fixtures/v1" ||
+    fixtureDocument.kind !== "DatabaseAdmissionFixtures" ||
+    JSON.stringify(fixtures.map((fixture) => fixture.accessClass)) !==
+      JSON.stringify(["runtime", "migration", "bootstrap"])
+  ) {
+    throw new Error(
+      "G5_FIXTURE_SUBSTITUTION_DENIED invalid admission fixture.",
     );
-    const requiredPodAnnotations = {
-      "security.deus.dev/workload-identity-mode": "eks-pod-identity",
-      "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
-      "security.deus.dev/workload-identity-binding-digest": bindingDigest,
-    };
-    const requiredPodScheduling = {
-      nodeSelector: {
-        [reservationKey]: nodePoolName,
-      },
-      tolerations: [
-        {
-          key: reservationKey,
-          operator: "Equal",
-          value: nodePoolName,
-          effect: "NoSchedule",
-        },
-      ],
-    };
-    const fixture = {
-      accessClass,
-      namespace,
-      serviceAccount,
-      bindingLabels,
-      requiredPodAnnotations,
-      requiredPodScheduling,
-      policy: compileAwsDatabaseAdmissionPolicy({
-        bindingId,
-        accessClass,
-        namespace,
-        serviceAccount,
-        bindingLabels,
-        requiredPodAnnotations,
-        requiredPodScheduling,
-      }),
-    };
+  }
+  for (const fixture of fixtures) {
+    const { namespace, serviceAccount } = fixture;
     apply(restrictedNamespace(namespace));
     apply({
       apiVersion: "v1",
@@ -836,8 +796,7 @@ function validateDatabaseAccessAdmission() {
       `clusterpolicy/${fixture.policy.metadata.name}`,
       "--timeout=60s",
     ]);
-    return fixture;
-  });
+  }
 
   for (const fixture of fixtures) {
     expectDenied(

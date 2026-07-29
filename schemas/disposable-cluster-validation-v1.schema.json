@@ -34,7 +34,7 @@
     "runId": {
       "type": "string",
       "maxLength": 128,
-      "pattern": "^secure-saas-infra-g5-[0-9]+-[a-f0-9]{8}$"
+      "pattern": "^secure-saas-platform-g5-[0-9]+-[a-f0-9]{8}$"
     },
     "scope": {
       "type": "object",
@@ -141,8 +141,7 @@
         "gitops/base/kyverno/database-native-admission.yaml",
         "gitops/base/kyverno/workload-native-admission.yaml",
         "gitops/base/namespaces/restricted-default-serviceaccounts.yaml",
-        "src/databaseAccess.ts",
-        "dist/databaseAccess.js",
+        "fixtures/database-admission-v1.json",
         "scripts/validate-disposable-cluster.mjs",
         "scripts/verify-disposable-cluster-report.mjs",
         "schemas/disposable-cluster-validation-v1.schema.json",
@@ -169,8 +168,9 @@
         "gitops/base/namespaces/restricted-default-serviceaccounts.yaml": {
           "$ref": "#/$defs/sha256"
         },
-        "src/databaseAccess.ts": { "$ref": "#/$defs/sha256" },
-        "dist/databaseAccess.js": { "$ref": "#/$defs/sha256" },
+        "fixtures/database-admission-v1.json": {
+          "$ref": "#/$defs/sha256"
+        },
         "scripts/validate-disposable-cluster.mjs": {
           "$ref": "#/$defs/sha256"
         },

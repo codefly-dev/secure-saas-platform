@@ -1,0 +1,48 @@
+{
+  "apiVersion": "infrastructure.deus.dev/platform-iac-handoff/v1",
+  "kind": "PlatformIacHandoff",
+  "specDigest": "79345e750430213b2a3169dad747bb7d22f715b3417a44fcd91ff4956520fb5c",
+  "spec": {
+    "cluster": {
+      "role": "platform",
+      "name": "platform-prod",
+      "endpoint": "https://0123456789ABCDEF.gr7.us-east-1.eks.amazonaws.com",
+      "certificateAuthorityReference": "pulumi://deus/secure-saas-infra/platform-prod/eksClusters/platform-prod/certificateAuthority"
+    },
+    "bootstrapIdentity": {
+      "principalArn": "arn:aws:iam::888877776666:role/InfrastructureApplyProd-Workload",
+      "accessEntryId": "eks-access://platform-prod/argocd-bootstrap"
+    },
+    "cloudResources": {
+      "accountId": "888877776666",
+      "region": "us-east-1",
+      "clusterArn": "arn:aws:eks:us-east-1:888877776666:cluster/platform-prod",
+      "vpcId": "vpc-0123456789abcdef0",
+      "privateSubnetIds": [
+        "subnet-0123456789abcdef0",
+        "subnet-0fedcba9876543210"
+      ],
+      "clusterSecurityGroupId": "sg-0123456789abcdef0",
+      "secretsEncryptionKeyArn": "arn:aws:kms:us-east-1:888877776666:key/11111111-2222-3333-4444-555555555555"
+    },
+    "gitops": {
+      "repository": "https://github.com/codefly-dev/secure-saas-platform.git",
+      "revision": "v0.1.0",
+      "bootstrapEntrypoint": "gitops/bootstrap/argocd/overlays/production/platform"
+    },
+    "policyDigests": {
+      "clusterAccess": "1111111111111111111111111111111111111111111111111111111111111111",
+      "networkBoundary": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "evidenceDigests": {
+      "iacPlan": "3333333333333333333333333333333333333333333333333333333333333333",
+      "iacRelease": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  },
+  "signature": {
+    "algorithm": "ecdsa-p256-sha256",
+    "keyId": "75f04ce20fba6c8926e353334fcec65a36c92551878bc5303f1d4f0dd93139f0",
+    "publicKeyReference": "keys/qualification-platform-handoff-ecdsa-p256.pub",
+    "value": "MEQCIDmMTxZHsBX0iuYrGYVpI/S1YV5OY32WYPLHzEw4z8TUAiBlp/tXIbOoPVvZZTA2TgMGOuvtEmrn5gqnoY1qe+EuIQ=="
+  }
+}

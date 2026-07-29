@@ -1,0 +1,7 @@
+* @codefly-dev/platform-security
+
+/.github/ @codefly-dev/platform-security
+/gitops/ @codefly-dev/platform-security
+/keys/ @codefly-dev/platform-security
+/schemas/ @codefly-dev/platform-security
+/scripts/ @codefly-dev/platform-security

@@ -1,340 +1,173 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { parseAllDocuments } from "yaml";
+import { spawnSync } from "node:child_process";
 import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  argocdControllerRules,
   argocdHelmValues,
-  argocdExecCredentialArgs,
-  createArgocd,
   databaseArgocdHelmValues,
-  databaseInfrastructureControllerRules,
-} from "../src/argocd";
-import {
-  argocdBootstrapDirectory,
-  argocdBootstrapHandoff,
-  validateArgocdConfig,
-  type ArgocdConfig,
-} from "../src/config";
-import {
-  flushPulumiMocks,
-  installPulumiMocks,
-  resourcesOfType,
-} from "./helpers/pulumiMocks";
+} from "../src/argocdValues.js";
 
-const config: ArgocdConfig = {
-  clusterStackRef: "deus/platform/dev",
-  clusterName: "platform-dev",
-  clusterRole: "platform",
-  clusterAccessRoleArn:
-    "arn:aws:iam::888877776666:role/InfrastructureApplyNonProd-Workload",
-  argocdHostname: "argocd.internal.example.com",
-  chartVersion: "10.2.1",
-  bootstrap: {
-    repository: "https://github.com/codefly-dev/secure-saas-infra.git",
-    revision: "a".repeat(40),
-    entrypoint: "gitops/bootstrap/argocd/overlays/dev/platform",
-  },
-  oidcIssuer: "https://identity.example.com/realms/deus",
-  oidcClientId: "argocd-platform-dev",
-  oidcClientSecretRef: "$oidc.organization.clientSecret",
-  oidcAdminGroup: "deus:infra:admins",
-};
+const handoff = "fixtures/platform-iac-handoff-v1.json";
+const publicKey = "keys/qualification-platform-handoff-ecdsa-p256.pub";
 
-test("Argo CD is OIDC-only with local admin, anonymous, and ambient readonly access disabled", () => {
-  assert.doesNotThrow(() => validateArgocdConfig(config));
-  const values: any = argocdHelmValues(config);
-  assert.equal(values.fullnameOverride, "argocd");
-  assert.equal(values.configs.cm["admin.enabled"], false);
-  assert.equal(values.configs.cm["users.anonymous.enabled"], false);
-  assert.match(
-    values.configs.cm["oidc.config"],
-    /enablePKCEAuthentication: true/,
-  );
-  assert.match(values.configs.cm["oidc.config"], /requestedIDTokenClaims/);
-  assert.match(
-    values.configs.cm["oidc.config"],
-    /clientSecret: \$oidc\.organization\.clientSecret/,
-  );
-  assert.equal(values.configs.rbac["policy.default"], "role:authenticated");
-  assert.doesNotMatch(values.configs.rbac["policy.csv"], /role:readonly/);
-  assert.match(
-    values.configs.rbac["policy.csv"],
-    /g, deus:infra:admins, role:admin/,
-  );
-  assert.equal(values.configs.rbac.scopes, "[groups]");
-  assert.equal(values.server.service.type, "ClusterIP");
-  assert.equal(values.configs.cm["exec.enabled"], false);
-  assert.equal(values.configs.cm["resource.respectRBAC"], "strict");
-  assert.equal(values.controller.clusterRoleRules.enabled, true);
-  assert.equal(values.controller.metrics.serviceMonitor.enabled, false);
-  assert.equal(values.server.metrics.serviceMonitor.enabled, false);
-  assert.equal(values.repoServer.metrics.serviceMonitor.enabled, false);
-  assert.equal(values.applicationSet.metrics.serviceMonitor.enabled, false);
-  assert.equal(
-    JSON.stringify(values.controller.clusterRoleRules.rules).includes('"*"'),
-    false,
-  );
+test("signed credential-free IaC handoff verifies before activation", () => {
+  const result = verify(handoff, publicKey);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Verified signed platform handoff/);
 });
 
-test("Argo CD EKS authentication always assumes one explicit member-account role", () => {
-  assert.deepEqual(
-    argocdExecCredentialArgs(
-      "platform-dev",
-      "us-east-1",
-      config.clusterAccessRoleArn,
-    ),
-    [
-      "eks",
-      "get-token",
-      "--cluster-name",
-      "platform-dev",
-      "--region",
-      "us-east-1",
-      "--role-arn",
-      config.clusterAccessRoleArn,
-    ],
-  );
-});
-
-test("Argo CD controller RBAC covers every resource in its selected role baseline", () => {
-  const resourcesByKind: Record<string, string> = {
-    AuthorizationPolicy: "authorizationpolicies",
-    ClusterPolicy: "clusterpolicies",
-    ConfigMap: "configmaps",
-    Connector: "connectors",
-    LimitRange: "limitranges",
-    Namespace: "namespaces",
-    NetworkPolicy: "networkpolicies",
-    PeerAuthentication: "peerauthentications",
-    ResourceQuota: "resourcequotas",
-    RuntimeClass: "runtimeclasses",
-    ServiceAccount: "serviceaccounts",
-    Telemetry: "telemetries",
-    ValidatingAdmissionPolicy: "validatingadmissionpolicies",
-    ValidatingAdmissionPolicyBinding: "validatingadmissionpolicybindings",
-  };
-
-  for (const clusterRole of ["platform", "execution"] as const) {
-    const roleConfig: ArgocdConfig = {
-      ...config,
-      clusterRole,
-      clusterName: `${clusterRole}-dev`,
-      bootstrap: {
-        ...config.bootstrap,
-        entrypoint: `gitops/bootstrap/argocd/overlays/dev/${clusterRole}`,
-      },
-    };
-    const rules: any[] =
-      argocdHelmValues(roleConfig).controller.clusterRoleRules.rules;
-    assert.equal(
-      JSON.stringify(rules).includes("connectors"),
-      clusterRole === "platform",
-    );
-    assert.equal(
-      JSON.stringify(rules).includes("runtimeclasses"),
-      clusterRole === "execution",
-    );
-    const baseline = parseAllDocuments(
-      execFileSync(
-        "kubectl",
-        ["kustomize", `gitops/overlays/dev/${clusterRole}`],
-        { encoding: "utf8" },
-      ),
-    )
-      .map((document) => document.toJSON() as any)
-      .filter(Boolean);
-    for (const resource of baseline) {
-      const apiGroup = String(resource.apiVersion).includes("/")
-        ? String(resource.apiVersion).split("/")[0]
-        : "";
-      const resourceName = resourcesByKind[resource.kind];
-      assert.ok(
-        resourceName,
-        `${resource.kind} must have an RBAC resource name`,
-      );
-      assert.ok(
-        rules.some(
-          (rule) =>
-            rule.apiGroups.includes(apiGroup) &&
-            rule.resources.includes(resourceName) &&
-            ["get", "list", "create", "update", "patch", "delete"].every(
-              (verb) => rule.verbs.includes(verb),
-            ),
-        ),
-        `${clusterRole} controller cannot reconcile ${apiGroup || "core"}/${resource.kind}`,
-      );
+test("handoff verifier rejects spec, signature, key, and credential substitution", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "platform-handoff-"));
+  try {
+    const baseline = JSON.parse(readFileSync(handoff, "utf8"));
+    for (const [name, mutate, error] of [
+      [
+        "spec",
+        (value: any) => {
+          value.spec.cluster.endpoint = "https://attacker.invalid";
+        },
+        /specDigest/,
+      ],
+      [
+        "signature",
+        (value: any) => {
+          value.signature.value =
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        },
+        /signature verification/,
+      ],
+      [
+        "credential",
+        (value: any) => {
+          value.spec.gitops.repository =
+            "https://user:password@github.com/codefly-dev/secure-saas-platform.git";
+        },
+        /schema validation|credential/,
+      ],
+    ] as const) {
+      const hostile = structuredClone(baseline);
+      mutate(hostile);
+      const file = path.join(directory, `${name}.json`);
+      writeFileSync(file, `${JSON.stringify(hostile)}\n`);
+      const result = verify(file, publicKey);
+      assert.notEqual(result.status, 0, name);
+      assert.match(result.stderr, error, name);
     }
-  }
-});
-
-test("Argo CD controller RBAC can reconcile the pinned monitoring stack", () => {
-  for (const clusterRole of ["platform", "execution"] as const) {
-    const roleConfig: ArgocdConfig = {
-      ...config,
-      clusterRole,
-      clusterName: `${clusterRole}-dev`,
-      bootstrap: {
-        ...config.bootstrap,
-        entrypoint: `gitops/bootstrap/argocd/overlays/dev/${clusterRole}`,
-      },
-    };
-    const rules: any[] =
-      argocdHelmValues(roleConfig).controller.clusterRoleRules.rules;
-    const monitoringResources = new Set(
-      rules
-        .filter((rule) => rule.apiGroups.includes("monitoring.coreos.com"))
-        .flatMap((rule) => rule.resources),
+    const wrongKey = path.join(directory, "wrong.pub");
+    copyFileSync(
+      "keys/qualification-platform-handoff-ecdsa-p256.pub",
+      wrongKey,
     );
-    assert.deepEqual([...monitoringResources].sort(), [
-      "alertmanagers",
-      "podmonitors",
-      "prometheuses",
-      "prometheusrules",
-      "servicemonitors",
-    ]);
+    writeFileSync(
+      wrongKey,
+      readFileSync(wrongKey, "utf8").replace("tR9e", "tR8e"),
+    );
+    const result = verify(handoff, wrongKey);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /public key|keyId|decode/i);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("Argo CD publishes a credential-free exact bootstrap handoff", () => {
-  const handoff = argocdBootstrapHandoff(config);
-  assert.deepEqual(handoff, {
-    clusterRole: "platform",
-    clusterName: "platform-dev",
-    repository: "https://github.com/codefly-dev/secure-saas-infra.git",
-    revision: "a".repeat(40),
-    bootstrapEntrypoint: "gitops/bootstrap/argocd/overlays/dev/platform",
-  });
-  assert.doesNotMatch(
-    JSON.stringify(handoff),
-    /accessRole|arn:aws|certificate|credential|endpoint|password|secret|token/i,
+test("minimal activation installs Argo CD and hands ownership to exact Git", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "scripts/activate-argocd.mjs",
+      "--handoff",
+      handoff,
+      "--public-key",
+      publicKey,
+      "--kubeconfig",
+      "/run/platform-promotion/kubeconfig",
+      "--revision",
+      "v0.1.0",
+      "--hostname",
+      "argocd-platform.internal.example",
+      "--oidc-issuer",
+      "https://identity.example/realms/platform",
+      "--oidc-client-id",
+      "argocd-platform",
+      "--oidc-client-secret-ref",
+      "$oidc.organization.clientSecret",
+      "--oidc-admin-group",
+      "deus:infra:admins",
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
   );
-  assert.equal(
-    argocdBootstrapDirectory(config),
-    `https://github.com/codefly-dev/secure-saas-infra//${config.bootstrap.entrypoint}?ref=${config.bootstrap.revision}`,
-  );
-});
-
-test("database infrastructure reconciliation uses a dedicated non-wildcard identity", () => {
-  const values: any = databaseArgocdHelmValues();
-  assert.equal(values.fullnameOverride, "argocd-database");
-  assert.equal(values.crds.install, false);
-  assert.equal(values.configs.cm["resource.respectRBAC"], "strict");
-  assert.equal(
-    values.controller.serviceAccount.name,
-    "database-infrastructure-application-controller",
-  );
-  assert.equal(values.controller.clusterRoleRules.enabled, true);
+  assert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  assert.equal(plan.role, "platform");
+  assert.equal(plan.helm.length, 2);
   assert.deepEqual(
-    values.controller.clusterRoleRules.rules,
-    databaseInfrastructureControllerRules(),
+    plan.helm.map((entry: any) => entry.arguments[4]),
+    ["argocd", "argocd-database"],
   );
-  const serialized = JSON.stringify(values.controller.clusterRoleRules.rules);
-  for (const forbidden of [
-    '"*"',
-    "clusterpolicies",
-    "pods",
-    "deployments",
-    "jobs",
-    "secrets",
-    "roles",
-    "nodes",
-    "impersonate",
-    '"delete"',
-    "deletecollection",
-    "nonResourceURLs",
-  ]) {
-    assert.equal(serialized.includes(forbidden), false, forbidden);
-  }
-  assert.equal(values.applicationSet.enabled, false);
-  assert.equal(values.dex.enabled, false);
+  assert.equal(
+    plan.gitHandoff.repository,
+    "https://github.com/codefly-dev/secure-saas-platform.git",
+  );
+  assert.equal(plan.gitHandoff.revision, "v0.1.0");
+  assert.equal(
+    plan.gitHandoff.entrypoint,
+    "gitops/bootstrap/argocd/overlays/production/platform",
+  );
+  assert.equal(JSON.stringify(plan).includes("pulumi"), false);
 });
 
-test("execution-role Argo CD installs no database control plane", async () => {
-  const { resources } = await installPulumiMocks();
-  createArgocd({
-    ...config,
-    clusterRole: "execution",
-    clusterName: "execution-dev",
-    bootstrap: {
-      ...config.bootstrap,
-      entrypoint: "gitops/bootstrap/argocd/overlays/dev/execution",
-    },
-  });
-  await flushPulumiMocks();
-
-  const namespaces = resourcesOfType(resources, "kubernetes:core/v1:Namespace");
-  const releases = resourcesOfType(resources, "kubernetes:helm.sh/v3:Release");
+test("Argo CD is OIDC-only with role-specific least privilege", () => {
+  for (const clusterRole of ["platform", "execution"] as const) {
+    const values: any = argocdHelmValues({
+      clusterRole,
+      argocdHostname: `argocd-${clusterRole}.internal.example`,
+      oidcIssuer: "https://identity.example/realms/platform",
+      oidcClientId: `argocd-${clusterRole}`,
+      oidcClientSecretRef: "$oidc.organization.clientSecret",
+      oidcAdminGroup: "deus:infra:admins",
+    });
+    assert.equal(values.configs.cm["admin.enabled"], false);
+    assert.equal(values.configs.cm["users.anonymous.enabled"], false);
+    assert.equal(values.configs.cm["exec.enabled"], false);
+    assert.equal(values.configs.cm["resource.respectRBAC"], "strict");
+    assert.match(
+      values.configs.cm["oidc.config"],
+      /enablePKCEAuthentication: true/,
+    );
+    const rules = JSON.stringify(argocdControllerRules(clusterRole));
+    assert.equal(rules.includes('"*"'), false);
+    assert.equal(rules.includes("runtimeclasses"), clusterRole === "execution");
+    assert.equal(rules.includes("connectors"), clusterRole === "platform");
+  }
+  const databaseValues: any = databaseArgocdHelmValues();
+  assert.equal(databaseValues.configs.cm["admin.enabled"], false);
   assert.equal(
-    namespaces.some(
-      (resource) => resource.inputs.metadata.name === "argocd-database",
+    JSON.stringify(databaseValues.controller.clusterRoleRules.rules).includes(
+      '"delete"',
     ),
     false,
   );
-  assert.equal(
-    releases.some((resource) => resource.name.includes("database")),
-    false,
-  );
-  assert.equal(releases.length, 1);
-  assert.equal(releases[0].inputs.version, config.chartVersion);
-  assert.equal(
-    releases[0].inputs.repositoryOpts.repo,
-    "https://argoproj.github.io/argo-helm",
-  );
-  const bootstraps = resourcesOfType(
-    resources,
-    "kubernetes:kustomize/v2:Directory",
-  );
-  assert.equal(bootstraps.length, 1);
-  assert.equal(
-    bootstraps[0].inputs.directory,
-    `https://github.com/codefly-dev/secure-saas-infra//gitops/bootstrap/argocd/overlays/dev/execution?ref=${config.bootstrap.revision}`,
-  );
 });
 
-test("Argo CD rejects credential-bearing issuers, secret values, wildcard groups, and mutable chart versions", () => {
-  const cases: Array<[Partial<ArgocdConfig>, RegExp]> = [
+function verify(handoffFile: string, keyFile: string) {
+  return spawnSync(
+    process.execPath,
     [
-      { oidcIssuer: "https://admin:password@identity.example.com" },
-      /credential-free exact HTTPS URL/,
+      "scripts/verify-platform-iac-handoff.mjs",
+      "--handoff",
+      handoffFile,
+      "--public-key",
+      keyFile,
     ],
-    [{ oidcClientId: "*" }, /exact OIDC client ID/],
-    [{ oidcClientSecretRef: "actual-secret" }, /secret-key reference/],
-    [{ oidcAdminGroup: "deus:*" }, /exact OIDC group/],
-    [{ chartVersion: "latest" }, /qualified release/],
-    [{ chartVersion: "10.2.2" }, /qualified release/],
-    [
-      {
-        bootstrap: {
-          ...config.bootstrap,
-          repository: "https://user:pass@example.invalid/repo",
-        },
-      },
-      /credential-free GitOps repository/,
-    ],
-    [
-      { bootstrap: { ...config.bootstrap, revision: "main" } },
-      /full Git commit SHA/,
-    ],
-    [
-      { bootstrap: { ...config.bootstrap, entrypoint: "../untrusted" } },
-      /bootstrap handoff/,
-    ],
-    [
-      {
-        bootstrap: {
-          ...config.bootstrap,
-          entrypoint: "gitops/bootstrap/argocd/overlays/production/platform",
-        },
-      },
-      /bootstrap handoff/,
-    ],
-    [{ clusterRole: "execution" }, /bootstrap handoff/],
-    [{ clusterAccessRoleArn: "*" }, /exact IAM role ARN/],
-  ];
-  for (const [change, expected] of cases) {
-    assert.throws(
-      () => validateArgocdConfig({ ...config, ...change }),
-      expected,
-    );
-  }
-});
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+}

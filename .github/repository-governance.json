@@ -1,0 +1,25 @@
+{
+  "defaultBranch": {
+    "name": "main",
+    "requiredApprovingReviews": 1,
+    "requireCodeOwnerReview": true,
+    "dismissStaleReviews": true,
+    "requireConversationResolution": true,
+    "requiredStatusChecks": [
+      "Platform source qualification",
+      "Argo CD exact reconciliation (amd64)",
+      "Argo CD exact reconciliation (arm64)"
+    ],
+    "allowForcePushes": false,
+    "allowDeletions": false
+  },
+  "releaseTags": {
+    "pattern": "refs/tags/v*",
+    "allowUpdates": false,
+    "allowDeletions": false
+  },
+  "productionEnvironment": {
+    "requiredReviewers": ["codefly-dev/platform-security"],
+    "preventSelfReview": true
+  }
+}

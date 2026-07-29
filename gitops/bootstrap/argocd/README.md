@@ -25,11 +25,11 @@ renders each role entrypoint, rejects a second role or overlapping resource
 owner, checks every Application against its project, and checks the in-repo
 baseline resources against their project allowlist.
 
-The Argo CD Pulumi stack requires an OIDC issuer, client ID, secret-key
-reference, and exact administrator group. It disables the local admin and
-anonymous users, gives the default authenticated role no ambient read access,
-and enables PKCE. The referenced OIDC secret must exist before login; the
-configuration never accepts the secret value itself.
+The activation CLI requires an OIDC issuer, client ID, secret-key reference,
+and exact administrator group. It disables the local admin and anonymous users,
+gives the default authenticated role no ambient read access, and enables PKCE.
+The referenced OIDC secret must exist before login; the configuration never
+accepts the secret value itself.
 
 1. cert-manager
 2. Gateway API CRDs
@@ -45,7 +45,8 @@ ingress gateway, Vault, Vault Secrets Operator, ExternalDNS, Argo Rollouts,
 Tailscale, and the database-infrastructure handoff. The execution role owns only
 the shared mesh, policy, metrics, observability, and runtime-security operators.
 
-Every in-repository Application source is pinned to a full Git commit SHA.
-Pulumi publishes `argocdBootstrapHandoff` with the exact cluster role, cluster
-name, credential-free repository URL, revision, and bootstrap entrypoint. Those
-fields contain no access role, token, secret, endpoint, or certificate data.
+Every in-repository Application source is pinned to a full Git commit SHA or
+protected immutable release tag. Cloud IaC publishes a signed handoff with the
+exact cluster role, endpoint and CA reference, bootstrap identity reference,
+cloud resource IDs, repository revision, and policy/evidence digests. It
+contains no token, secret, private key, or embedded cluster credential.

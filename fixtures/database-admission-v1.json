@@ -1,0 +1,918 @@
+{
+  "apiVersion": "qualification.deus.dev/database-admission-fixtures/v1",
+  "kind": "DatabaseAdmissionFixtures",
+  "fixtures": [
+    {
+      "accessClass": "runtime",
+      "namespace": "database-runtime",
+      "serviceAccount": "database-runtime",
+      "bindingLabels": {
+        "security.deus.dev/workload-identity-binding": "database-runtime"
+      },
+      "requiredPodAnnotations": {
+        "security.deus.dev/workload-identity-mode": "eks-pod-identity",
+        "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
+        "security.deus.dev/workload-identity-binding-digest": "ce8a8916459f67bb2159184b602c76686037d7e9e43629ca57c9a7487d23a846"
+      },
+      "requiredPodScheduling": {
+        "nodeSelector": {
+          "node-restriction.kubernetes.io/database-access-20aded3ed24ae60f": "k3s-postgres-runtime-database-access"
+        },
+        "tolerations": [
+          {
+            "key": "node-restriction.kubernetes.io/database-access-20aded3ed24ae60f",
+            "operator": "Equal",
+            "value": "k3s-postgres-runtime-database-access",
+            "effect": "NoSchedule"
+          }
+        ]
+      },
+      "policy": {
+        "apiVersion": "kyverno.io/v1",
+        "kind": "ClusterPolicy",
+        "metadata": {
+          "name": "k3s-postgres-runtime-access",
+          "annotations": {
+            "pod-policies.kyverno.io/autogen-controllers": "none"
+          }
+        },
+        "spec": {
+          "admission": true,
+          "background": false,
+          "failurePolicy": "Fail",
+          "validationFailureAction": "Enforce",
+          "rules": [
+            {
+              "name": "bind-exact-database-access-class",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_ACCESS_BINDING_DENIED",
+                "pattern": {
+                  "metadata": {
+                    "labels": {
+                      "security.deus.dev/workload-identity-binding": "database-runtime"
+                    },
+                    "annotations": {
+                      "security.deus.dev/workload-identity-mode": "eks-pod-identity",
+                      "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
+                      "security.deus.dev/workload-identity-binding-digest": "ce8a8916459f67bb2159184b602c76686037d7e9e43629ca57c9a7487d23a846"
+                    }
+                  },
+                  "spec": {
+                    "serviceAccountName": "database-runtime",
+                    "automountServiceAccountToken": false,
+                    "nodeSelector": {
+                      "node-restriction.kubernetes.io/database-access-20aded3ed24ae60f": "k3s-postgres-runtime-database-access"
+                    },
+                    "^(tolerations)": [
+                      {
+                        "key": "node-restriction.kubernetes.io/database-access-20aded3ed24ae60f",
+                        "operator": "Equal",
+                        "value": "k3s-postgres-runtime-database-access",
+                        "effect": "NoSchedule"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "reserve-database-node-pool",
+              "match": { "any": [{ "resources": { "kinds": ["Pod"] } }] },
+              "preconditions": {
+                "any": [
+                  {
+                    "key": "{{ request.object.spec.nodeSelector.\"node-restriction.kubernetes.io/database-access-20aded3ed24ae60f\" || '' }}",
+                    "operator": "Equals",
+                    "value": "k3s-postgres-runtime-database-access"
+                  },
+                  {
+                    "key": "{{ request.object.spec.tolerations[?key == 'node-restriction.kubernetes.io/database-access-20aded3ed24ae60f'] | length(@) }}",
+                    "operator": "GreaterThan",
+                    "value": 0
+                  },
+                  {
+                    "key": "{{ contains(to_string(request.object.spec.affinity || `{}`), 'node-restriction.kubernetes.io/database-access-20aded3ed24ae60f') }}",
+                    "operator": "Equals",
+                    "value": true
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_NODE_POOL_RESERVED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.metadata.namespace || '' }}",
+                        "operator": "NotEquals",
+                        "value": "database-runtime"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "deny-direct-node-binding",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_NODE_NAME_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.spec.nodeName || '' }}",
+                        "operator": "NotEquals",
+                        "value": ""
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-pod-controller-identity",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_ACTOR_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-controller-manager"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:replicaset-controller"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:job-controller"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-replicaset-controller-identity",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["apps/v1/ReplicaSet"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_CHILD_ACTOR_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-controller-manager"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:replicaset-controller"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "database-pod-bindings-scheduler-only",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod/binding"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_BINDING_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-scheduler"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "database-pods-default-scheduler-only",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_CUSTOM_SCHEDULER_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.spec.schedulerName || 'default-scheduler' }}",
+                        "operator": "NotEquals",
+                        "value": "default-scheduler"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-pod-controller-owner",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_OWNER_DENIED",
+                "pattern": {
+                  "metadata": {
+                    "ownerReferences": [
+                      { "controller": true, "kind": "ReplicaSet" }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "restrict-database-workload-kind",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": [
+                        "DaemonSet",
+                        "Job",
+                        "CronJob",
+                        "StatefulSet",
+                        "ReplicationController"
+                      ],
+                      "namespaces": ["database-runtime"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_WORKLOAD_KIND_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      { "key": true, "operator": "Equals", "value": true }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "accessClass": "migration",
+      "namespace": "database-migration",
+      "serviceAccount": "database-migration",
+      "bindingLabels": {
+        "security.deus.dev/workload-identity-binding": "database-migration"
+      },
+      "requiredPodAnnotations": {
+        "security.deus.dev/workload-identity-mode": "eks-pod-identity",
+        "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
+        "security.deus.dev/workload-identity-binding-digest": "1ec484f1ebaccb7e14eae7e03d2731f728ddf2509f99d3bbf49a0a844bbf10b7"
+      },
+      "requiredPodScheduling": {
+        "nodeSelector": {
+          "node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee": "k3s-postgres-migration-database-access"
+        },
+        "tolerations": [
+          {
+            "key": "node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee",
+            "operator": "Equal",
+            "value": "k3s-postgres-migration-database-access",
+            "effect": "NoSchedule"
+          }
+        ]
+      },
+      "policy": {
+        "apiVersion": "kyverno.io/v1",
+        "kind": "ClusterPolicy",
+        "metadata": {
+          "name": "k3s-postgres-migration-access",
+          "annotations": {
+            "pod-policies.kyverno.io/autogen-controllers": "none"
+          }
+        },
+        "spec": {
+          "admission": true,
+          "background": false,
+          "failurePolicy": "Fail",
+          "validationFailureAction": "Enforce",
+          "rules": [
+            {
+              "name": "bind-exact-database-access-class",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_ACCESS_BINDING_DENIED",
+                "pattern": {
+                  "metadata": {
+                    "labels": {
+                      "security.deus.dev/workload-identity-binding": "database-migration"
+                    },
+                    "annotations": {
+                      "security.deus.dev/workload-identity-mode": "eks-pod-identity",
+                      "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
+                      "security.deus.dev/workload-identity-binding-digest": "1ec484f1ebaccb7e14eae7e03d2731f728ddf2509f99d3bbf49a0a844bbf10b7"
+                    }
+                  },
+                  "spec": {
+                    "serviceAccountName": "database-migration",
+                    "automountServiceAccountToken": false,
+                    "nodeSelector": {
+                      "node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee": "k3s-postgres-migration-database-access"
+                    },
+                    "^(tolerations)": [
+                      {
+                        "key": "node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee",
+                        "operator": "Equal",
+                        "value": "k3s-postgres-migration-database-access",
+                        "effect": "NoSchedule"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "reserve-database-node-pool",
+              "match": { "any": [{ "resources": { "kinds": ["Pod"] } }] },
+              "preconditions": {
+                "any": [
+                  {
+                    "key": "{{ request.object.spec.nodeSelector.\"node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee\" || '' }}",
+                    "operator": "Equals",
+                    "value": "k3s-postgres-migration-database-access"
+                  },
+                  {
+                    "key": "{{ request.object.spec.tolerations[?key == 'node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee'] | length(@) }}",
+                    "operator": "GreaterThan",
+                    "value": 0
+                  },
+                  {
+                    "key": "{{ contains(to_string(request.object.spec.affinity || `{}`), 'node-restriction.kubernetes.io/database-access-d4a6a57a6933a5ee') }}",
+                    "operator": "Equals",
+                    "value": true
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_NODE_POOL_RESERVED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.metadata.namespace || '' }}",
+                        "operator": "NotEquals",
+                        "value": "database-migration"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "deny-direct-node-binding",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_NODE_NAME_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.spec.nodeName || '' }}",
+                        "operator": "NotEquals",
+                        "value": ""
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-pod-controller-identity",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_ACTOR_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-controller-manager"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:replicaset-controller"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:job-controller"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "database-pod-bindings-scheduler-only",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod/binding"],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_BINDING_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-scheduler"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "database-pods-default-scheduler-only",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_CUSTOM_SCHEDULER_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.spec.schedulerName || 'default-scheduler' }}",
+                        "operator": "NotEquals",
+                        "value": "default-scheduler"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-pod-controller-owner",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_OWNER_DENIED",
+                "pattern": {
+                  "metadata": {
+                    "ownerReferences": [{ "controller": true, "kind": "Job" }]
+                  }
+                }
+              }
+            },
+            {
+              "name": "restrict-database-workload-kind",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": [
+                        "Deployment",
+                        "DaemonSet",
+                        "CronJob",
+                        "StatefulSet",
+                        "ReplicaSet",
+                        "ReplicationController"
+                      ],
+                      "namespaces": ["database-migration"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_WORKLOAD_KIND_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      { "key": true, "operator": "Equals", "value": true }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "accessClass": "bootstrap",
+      "namespace": "database-bootstrap",
+      "serviceAccount": "database-bootstrap",
+      "bindingLabels": {
+        "security.deus.dev/workload-identity-binding": "database-bootstrap"
+      },
+      "requiredPodAnnotations": {
+        "security.deus.dev/workload-identity-mode": "eks-pod-identity",
+        "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
+        "security.deus.dev/workload-identity-binding-digest": "c843bce9335eaa0ecdb20b827d996c897a9092fa17acc20286fbf96e1800d6ba"
+      },
+      "requiredPodScheduling": {
+        "nodeSelector": {
+          "node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f": "k3s-postgres-bootstrap-database-access"
+        },
+        "tolerations": [
+          {
+            "key": "node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f",
+            "operator": "Equal",
+            "value": "k3s-postgres-bootstrap-database-access",
+            "effect": "NoSchedule"
+          }
+        ]
+      },
+      "policy": {
+        "apiVersion": "kyverno.io/v1",
+        "kind": "ClusterPolicy",
+        "metadata": {
+          "name": "k3s-postgres-bootstrap-access",
+          "annotations": {
+            "pod-policies.kyverno.io/autogen-controllers": "none"
+          }
+        },
+        "spec": {
+          "admission": true,
+          "background": false,
+          "failurePolicy": "Fail",
+          "validationFailureAction": "Enforce",
+          "rules": [
+            {
+              "name": "bind-exact-database-access-class",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_ACCESS_BINDING_DENIED",
+                "pattern": {
+                  "metadata": {
+                    "labels": {
+                      "security.deus.dev/workload-identity-binding": "database-bootstrap"
+                    },
+                    "annotations": {
+                      "security.deus.dev/workload-identity-mode": "eks-pod-identity",
+                      "security.deus.dev/workload-identity-audience": "pods.eks.amazonaws.com",
+                      "security.deus.dev/workload-identity-binding-digest": "c843bce9335eaa0ecdb20b827d996c897a9092fa17acc20286fbf96e1800d6ba"
+                    }
+                  },
+                  "spec": {
+                    "serviceAccountName": "database-bootstrap",
+                    "automountServiceAccountToken": false,
+                    "nodeSelector": {
+                      "node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f": "k3s-postgres-bootstrap-database-access"
+                    },
+                    "^(tolerations)": [
+                      {
+                        "key": "node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f",
+                        "operator": "Equal",
+                        "value": "k3s-postgres-bootstrap-database-access",
+                        "effect": "NoSchedule"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "reserve-database-node-pool",
+              "match": { "any": [{ "resources": { "kinds": ["Pod"] } }] },
+              "preconditions": {
+                "any": [
+                  {
+                    "key": "{{ request.object.spec.nodeSelector.\"node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f\" || '' }}",
+                    "operator": "Equals",
+                    "value": "k3s-postgres-bootstrap-database-access"
+                  },
+                  {
+                    "key": "{{ request.object.spec.tolerations[?key == 'node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f'] | length(@) }}",
+                    "operator": "GreaterThan",
+                    "value": 0
+                  },
+                  {
+                    "key": "{{ contains(to_string(request.object.spec.affinity || `{}`), 'node-restriction.kubernetes.io/database-access-ccf5cc7a051a1d5f') }}",
+                    "operator": "Equals",
+                    "value": true
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_NODE_POOL_RESERVED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.metadata.namespace || '' }}",
+                        "operator": "NotEquals",
+                        "value": "database-bootstrap"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "deny-direct-node-binding",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_NODE_NAME_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.spec.nodeName || '' }}",
+                        "operator": "NotEquals",
+                        "value": ""
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-pod-controller-identity",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_ACTOR_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-controller-manager"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:replicaset-controller"
+                      },
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:serviceaccount:kube-system:job-controller"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "database-pod-bindings-scheduler-only",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod/binding"],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_BINDING_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.userInfo.username || '' }}",
+                        "operator": "NotEquals",
+                        "value": "system:kube-scheduler"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "database-pods-default-scheduler-only",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_CUSTOM_SCHEDULER_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      {
+                        "key": "{{ request.object.spec.schedulerName || 'default-scheduler' }}",
+                        "operator": "NotEquals",
+                        "value": "default-scheduler"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "name": "require-database-pod-controller-owner",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": ["Pod"],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_POD_OWNER_DENIED",
+                "pattern": {
+                  "metadata": {
+                    "ownerReferences": [{ "controller": true, "kind": "Job" }]
+                  }
+                }
+              }
+            },
+            {
+              "name": "restrict-database-workload-kind",
+              "match": {
+                "any": [
+                  {
+                    "resources": {
+                      "kinds": [
+                        "Deployment",
+                        "DaemonSet",
+                        "CronJob",
+                        "StatefulSet",
+                        "ReplicaSet",
+                        "ReplicationController"
+                      ],
+                      "namespaces": ["database-bootstrap"]
+                    }
+                  }
+                ]
+              },
+              "validate": {
+                "message": "SEC_DATABASE_WORKLOAD_KIND_DENIED",
+                "deny": {
+                  "conditions": {
+                    "all": [
+                      { "key": true, "operator": "Equals", "value": true }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

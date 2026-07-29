@@ -1,0 +1,95 @@
+name: production-promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Reviewed signed commit or protected immutable release tag
+        required: true
+        type: string
+      clusterRole:
+        description: Exact cluster role
+        required: true
+        type: choice
+        options:
+          - platform
+          - execution
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-${{ inputs.clusterRole }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.clusterRole }}
+    environment: production
+    runs-on: [self-hosted, linux, platform-promotion]
+    timeout-minutes: 30
+    env:
+      RELEASE_REVISION: ${{ inputs.revision }}
+      CLUSTER_ROLE: ${{ inputs.clusterRole }}
+      HANDOFF_PATH: ${{ vars.PLATFORM_HANDOFF_PATH }}
+      HANDOFF_PUBLIC_KEY_PATH: ${{ vars.PLATFORM_HANDOFF_PUBLIC_KEY_PATH }}
+      KUBECONFIG_PATH: ${{ vars.PLATFORM_KUBECONFIG_PATH }}
+      ARGOCD_HOSTNAME: ${{ vars.ARGOCD_HOSTNAME }}
+      OIDC_ISSUER: ${{ vars.ARGOCD_OIDC_ISSUER }}
+      OIDC_CLIENT_ID: ${{ vars.ARGOCD_OIDC_CLIENT_ID }}
+      OIDC_CLIENT_SECRET_REF: ${{ vars.ARGOCD_OIDC_CLIENT_SECRET_REF }}
+      OIDC_ADMIN_GROUP: ${{ vars.ARGOCD_OIDC_ADMIN_GROUP }}
+    steps:
+      - name: Checkout reviewed source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.revision }}
+      - name: Setup exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - name: Install exact npm version and dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm ci --ignore-scripts
+      - name: Require reviewed signed commit or protected immutable tag
+        run: npm run promotion:verify-source -- --revision "$RELEASE_REVISION"
+      - name: Verify signed credential-free IaC handoff
+        run: >-
+          node scripts/verify-platform-iac-handoff.mjs
+          --handoff "$HANDOFF_PATH"
+          --public-key "$HANDOFF_PUBLIC_KEY_PATH"
+      - name: Activate Argo CD and hand reconciliation to Git
+        run: >-
+          npm run activate --
+          --handoff "$HANDOFF_PATH"
+          --public-key "$HANDOFF_PUBLIC_KEY_PATH"
+          --kubeconfig "$KUBECONFIG_PATH"
+          --revision "$RELEASE_REVISION"
+          --hostname "$ARGOCD_HOSTNAME"
+          --oidc-issuer "$OIDC_ISSUER"
+          --oidc-client-id "$OIDC_CLIENT_ID"
+          --oidc-client-secret-ref "$OIDC_CLIENT_SECRET_REF"
+          --oidc-admin-group "$OIDC_ADMIN_GROUP"
+          --execute
+      - name: Record exact observed Argo revision and health
+        run: |
+          mkdir -p artifacts
+          npm run promotion:evidence -- \
+            --revision "$RELEASE_REVISION" \
+            --cluster-role "$CLUSTER_ROLE" \
+            --application "${CLUSTER_ROLE}-cluster-baseline" \
+            --namespace argocd \
+            --kubeconfig "$KUBECONFIG_PATH" \
+            --output artifacts/platform-promotion-evidence.json
+      - name: Upload promotion evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: platform-production-${{ inputs.clusterRole }}-${{ github.run_id }}
+          path: artifacts/platform-promotion-evidence.json
+          if-no-files-found: error
+          retention-days: 365

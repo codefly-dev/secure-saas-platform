@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://security.deus.dev/schemas/platform-iac-handoff-v1.schema.json",
+  "title": "Signed credential-free cloud IaC to platform handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "specDigest", "spec", "signature"],
+  "properties": {
+    "apiVersion": {
+      "const": "infrastructure.deus.dev/platform-iac-handoff/v1"
+    },
+    "kind": { "const": "PlatformIacHandoff" },
+    "specDigest": { "$ref": "#/$defs/sha256" },
+    "spec": { "$ref": "#/$defs/spec" },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "opaqueReference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/?&=%+@-]*$"
+    },
+    "awsArn": {
+      "type": "string",
+      "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):[a-z0-9-]+:[a-z0-9-]*:\\d{12}:[A-Za-z0-9+=,.@_:/-]+$"
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cluster",
+        "bootstrapIdentity",
+        "cloudResources",
+        "gitops",
+        "policyDigests",
+        "evidenceDigests"
+      ],
+      "properties": {
+        "cluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "name",
+            "endpoint",
+            "certificateAuthorityReference"
+          ],
+          "properties": {
+            "role": { "enum": ["platform", "execution"] },
+            "name": {
+              "type": "string",
+              "pattern": "^(?:platform|execution)-(?:dev|staging|prod)$"
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://[^/?#]+(?::\\d+)?$"
+            },
+            "certificateAuthorityReference": {
+              "$ref": "#/$defs/opaqueReference"
+            }
+          }
+        },
+        "bootstrapIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["principalArn", "accessEntryId"],
+          "properties": {
+            "principalArn": {
+              "type": "string",
+              "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):iam::\\d{12}:role/[A-Za-z0-9+=,.@_/-]+$"
+            },
+            "accessEntryId": { "$ref": "#/$defs/opaqueReference" }
+          }
+        },
+        "cloudResources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accountId",
+            "region",
+            "clusterArn",
+            "vpcId",
+            "privateSubnetIds",
+            "clusterSecurityGroupId",
+            "secretsEncryptionKeyArn"
+          ],
+          "properties": {
+            "accountId": {
+              "type": "string",
+              "pattern": "^\\d{12}$"
+            },
+            "region": {
+              "type": "string",
+              "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-\\d$"
+            },
+            "clusterArn": { "$ref": "#/$defs/awsArn" },
+            "vpcId": {
+              "type": "string",
+              "pattern": "^vpc-[a-f0-9]{8,17}$"
+            },
+            "privateSubnetIds": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^subnet-[a-f0-9]{8,17}$"
+              }
+            },
+            "clusterSecurityGroupId": {
+              "type": "string",
+              "pattern": "^sg-[a-f0-9]{8,17}$"
+            },
+            "secretsEncryptionKeyArn": { "$ref": "#/$defs/awsArn" }
+          }
+        },
+        "gitops": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "revision", "bootstrapEntrypoint"],
+          "properties": {
+            "repository": {
+              "const": "https://github.com/codefly-dev/secure-saas-platform.git"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:[a-f0-9]{40}|v\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+)?)$"
+            },
+            "bootstrapEntrypoint": {
+              "type": "string",
+              "pattern": "^gitops/bootstrap/argocd/overlays/(?:dev|staging|production)/(?:platform|execution)$"
+            }
+          }
+        },
+        "policyDigests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clusterAccess", "networkBoundary"],
+          "properties": {
+            "clusterAccess": { "$ref": "#/$defs/sha256" },
+            "networkBoundary": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "evidenceDigests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["iacPlan", "iacRelease"],
+          "properties": {
+            "iacPlan": { "$ref": "#/$defs/sha256" },
+            "iacRelease": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "publicKeyReference", "value"],
+      "properties": {
+        "algorithm": { "const": "ecdsa-p256-sha256" },
+        "keyId": { "$ref": "#/$defs/sha256" },
+        "publicKeyReference": { "$ref": "#/$defs/opaqueReference" },
+        "value": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      }
+    }
+  }
+}

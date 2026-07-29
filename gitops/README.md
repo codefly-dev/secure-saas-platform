@@ -1,6 +1,7 @@
 # GitOps Baseline
 
-This directory contains the starting Kubernetes baseline for clusters created by Pulumi.
+This directory contains the Kubernetes desired state activated from a verified
+cloud-IaC handoff.
 
 The intent is:
 
@@ -25,7 +26,8 @@ entrypoint creates exactly one cluster baseline Application for its target:
 - `platform-cluster-baseline`
 - `execution-cluster-baseline`
 
-Always select both the environment and role:
+The activation CLI always selects both the signed environment and role. For
+local rendering:
 
 ```sh
 kubectl apply -k gitops/bootstrap/argocd/overlays/staging/platform

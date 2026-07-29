@@ -214,11 +214,10 @@ const EXPECTED_INPUT_PATHS = Object.freeze(
     "gitops/base/kyverno/database-native-admission.yaml",
     "gitops/base/kyverno/workload-native-admission.yaml",
     "gitops/base/namespaces/restricted-default-serviceaccounts.yaml",
-    "dist/databaseAccess.js",
+    "fixtures/database-admission-v1.json",
     "schemas/disposable-cluster-validation-v1.schema.json",
     "scripts/validate-disposable-cluster.mjs",
     "scripts/verify-disposable-cluster-report.mjs",
-    "src/databaseAccess.ts",
   ].sort(),
 );
 

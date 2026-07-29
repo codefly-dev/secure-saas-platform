@@ -22,7 +22,7 @@ metadata:
 spec:
   description: IaC-owned cluster security and namespace baselines.
   sourceRepos:
-    - https://github.com/codefly-dev/secure-saas-infra.git
+    - https://github.com/codefly-dev/secure-saas-platform.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: agent-broker
@@ -300,7 +300,7 @@ metadata:
 spec:
   description: Digest-bound database access bundles; never application delivery.
   sourceRepos:
-    - https://github.com/codefly-dev/secure-saas-infra.git
+    - https://github.com/codefly-dev/secure-saas-platform.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: codefly-db-runtime-warden-saas-postgres-development
@@ -351,7 +351,7 @@ metadata:
 spec:
   description: Namespaced application delivery without cluster or security-controller authority.
   sourceRepos:
-    - https://github.com/codefly-dev/secure-saas-infra.git
+    - https://github.com/codefly-dev/secure-saas-platform.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: workloads

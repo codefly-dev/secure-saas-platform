@@ -1,9 +1,20 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "rootDir": ".",
     "outDir": "dist-test",
     "noEmit": false
   },
-  "include": ["src/**/*.ts", "policy/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "src/argocdValues.ts",
+    "tests/argocd.test.ts",
+    "tests/disposableClusterReportVerifier.test.ts",
+    "tests/gitops.test.ts",
+    "tests/promotionEvidence.test.ts"
+  ]
 }

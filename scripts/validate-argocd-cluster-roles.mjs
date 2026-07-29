@@ -381,7 +381,7 @@ function reconcileRole(cluster, role, repository, revision) {
       };
     } else if (
       application.spec.source?.repoURL ===
-      "https://github.com/codefly-dev/secure-saas-infra.git"
+      "https://github.com/codefly-dev/secure-saas-platform.git"
     ) {
       application.spec.source.repoURL = repository;
       application.spec.source.targetRevision = revision;
@@ -438,7 +438,9 @@ function reconcileRole(cluster, role, repository, revision) {
       if (result.status !== 0) return false;
       const status = JSON.parse(result.stdout).status ?? {};
       return (
-        status.sync?.status === "Synced" && status.health?.status === "Healthy"
+        status.sync?.revision === revision &&
+        status.sync?.status === "Synced" &&
+        status.health?.status === "Healthy"
       );
     });
   }
