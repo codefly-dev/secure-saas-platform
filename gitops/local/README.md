@@ -25,6 +25,12 @@ that every published registry port is loopback-only, reconnects it with
 it during cluster teardown. This keeps Codefly development registries reusable
 without giving the GitOps lifecycle ownership of their images.
 
+Teardown also verifies that the cluster network contains only the owned k3d
+nodes, the owned read-only Git remote, and that validated registry. It refuses
+before deleting anything when application or other external containers remain
+attached; disconnect those containers first, then reconnect them after the next
+cluster is ready.
+
 The local overlay shares the provider-neutral namespace, quota, and
 network-policy bases. It is deliberately one combined developer cluster. It
 does not pretend to validate:
