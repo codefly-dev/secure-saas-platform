@@ -95,3 +95,7 @@ state and kubeconfig credentials remain mode-restricted under ignored
 `.local/`. This single combined cluster is a developer convenience; AMD64 and
 ARM64 CI still prove exact platform/execution isolation with two disposable
 clusters, and AWS behavior remains an AWS gate.
+
+An existing exact-name k3d registry is reused only after its published ports
+are proven loopback-only. It remains an independently preserved resource when
+the cluster is removed.
