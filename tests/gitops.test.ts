@@ -594,6 +594,8 @@ test("local k3d uses exact Git reconciliation and fail-closed lifecycle controls
     "codefly.local-gitops.owner",
     "--registry-use",
     "assertReusableRegistry",
+    "assertExclusiveClusterNetwork",
+    "disconnect external containers first",
     '"network",\n      "disconnect"',
     "preserved-external-resource",
     "assertLocalDocker",

@@ -33,6 +33,7 @@ const ownerMarkerPath = path.join(stateDirectory, "owner.json");
 const kubeconfigPath = path.join(stateDirectory, "kubeconfig.yaml");
 const gitContainerName = `codefly-${clusterName}-git`;
 const expectedRegistryName = `k3d-${clusterName}-registry`;
+const clusterNetworkName = `k3d-${clusterName}`;
 const gitRepositoryUrl =
   "http://codefly-local-git.argocd.svc.cluster.local/gitops.git";
 const k3sImage =
@@ -101,6 +102,11 @@ async function up() {
       `state directory '${relative(stateDirectory)}' already exists; use down first`,
     );
   }
+  if (networkRecord()) {
+    throw new Error(
+      `cluster network '${clusterNetworkName}' already exists; disconnect preserved external containers and remove the stale network first`,
+    );
+  }
 
   createOwnedState();
   const source = snapshotGitops();
@@ -157,7 +163,7 @@ async function up() {
     "--name",
     gitContainerName,
     "--network",
-    `k3d-${clusterName}`,
+    clusterNetworkName,
     "--label",
     `${ownerLabel}=${ownerValue}`,
     "--label",
@@ -169,7 +175,7 @@ async function up() {
   const gitServerAddress = capture("docker", [
     "inspect",
     "--format",
-    `{{(index .NetworkSettings.Networks "k3d-${clusterName}").IPAddress}}`,
+    `{{(index .NetworkSettings.Networks "${clusterNetworkName}").IPAddress}}`,
     gitContainerName,
   ]).trim();
   if (!isIpv4(gitServerAddress)) {
@@ -320,13 +326,21 @@ function down() {
   const cluster = clusterRecord();
   const statePresent = existsSync(stateDirectory);
   const registry = registryRecord();
-  const clusterNetwork = `k3d-${clusterName}`;
+  const network = networkRecord();
   const registryAttached =
-    registry?.Networks?.includes(clusterNetwork) ?? false;
+    registry?.Networks?.includes(clusterNetworkName) ?? false;
   if (gitContainerPresent) assertOwnedGitContainer();
   if (cluster) assertOwnedCluster(cluster);
   if (statePresent) assertOwnedState();
   if (registryAttached) assertReusableRegistry(registry, true);
+  if (cluster) {
+    assertExclusiveClusterNetwork(
+      network,
+      cluster,
+      gitContainerPresent,
+      registryAttached,
+    );
+  }
 
   let removed = false;
   if (gitContainerPresent) {
@@ -337,7 +351,7 @@ function down() {
     run("docker", [
       "network",
       "disconnect",
-      clusterNetwork,
+      clusterNetworkName,
       expectedRegistryName,
     ]);
   }
@@ -741,6 +755,65 @@ function registryRecord() {
   );
 }
 
+function networkRecord() {
+  const result = spawnSync(
+    "docker",
+    ["network", "inspect", clusterNetworkName],
+    {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: childEnvironment,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    if (
+      result.stdout.trim() === "[]" &&
+      result.stderr.includes(`network ${clusterNetworkName} not found`)
+    ) {
+      return undefined;
+    }
+    throw new Error(
+      result.stderr.trim() || "could not inspect cluster network",
+    );
+  }
+  return JSON.parse(result.stdout)[0];
+}
+
+function assertExclusiveClusterNetwork(
+  network,
+  cluster,
+  gitContainerPresent,
+  registryAttached,
+) {
+  const expectedContainers = new Set(cluster.nodes.map((node) => node.name));
+  if (gitContainerPresent) expectedContainers.add(gitContainerName);
+  if (registryAttached) expectedContainers.add(expectedRegistryName);
+  const actualContainers = new Set(
+    Object.values(network?.Containers ?? {}).map((container) => container.Name),
+  );
+  const unexpectedContainers = [...actualContainers].filter(
+    (name) => !expectedContainers.has(name),
+  );
+  const missingContainers = [...expectedContainers].filter(
+    (name) => !actualContainers.has(name),
+  );
+  if (
+    network?.Name !== clusterNetworkName ||
+    network?.Driver !== "bridge" ||
+    network?.Scope !== "local" ||
+    network?.Internal !== false ||
+    network?.Ingress !== false ||
+    network?.Labels?.app !== "k3d" ||
+    unexpectedContainers.length > 0 ||
+    missingContainers.length > 0
+  ) {
+    throw new Error(
+      `refusing to remove cluster network '${clusterNetworkName}' without exact exclusive ownership; disconnect external containers first (unexpected: ${unexpectedContainers.join(", ") || "none"}; missing: ${missingContainers.join(", ") || "none"})`,
+    );
+  }
+}
+
 function assertReusableRegistry(registry, requireAttached) {
   const bindings = Object.values(registry?.portMappings ?? {}).flat();
   if (
@@ -749,7 +822,7 @@ function assertReusableRegistry(registry, requireAttached) {
     registry?.runtimeLabels?.["k3d.role"] !== "registry" ||
     bindings.length === 0 ||
     bindings.some((binding) => binding.HostIp !== "127.0.0.1") ||
-    (requireAttached && !registry.Networks?.includes(`k3d-${clusterName}`))
+    (requireAttached && !registry.Networks?.includes(clusterNetworkName))
   ) {
     throw new Error(
       `refusing registry '${expectedRegistryName}' unless it is an exact loopback-only k3d registry${requireAttached ? " attached to the owned cluster network" : ""}`,
