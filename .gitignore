@@ -1,6 +1,7 @@
 node_modules/
 dist-test/
 artifacts/
+.local/
 *.tsbuildinfo
 .DS_Store
 .env

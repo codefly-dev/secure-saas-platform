@@ -14,7 +14,14 @@ const bootstrapEntrypoints = environments.flatMap((environment) =>
 const baselineEntrypoints = environments.flatMap((environment) =>
   clusterRoles.map((clusterRole) => `overlays/${environment}/${clusterRole}`),
 );
-const relativeOverlays = [...bootstrapEntrypoints, ...baselineEntrypoints];
+const localBootstrapEntrypoint = "bootstrap/argocd/overlays/local";
+const localBaselineEntrypoint = "overlays/local";
+const relativeOverlays = [
+  ...bootstrapEntrypoints,
+  localBootstrapEntrypoint,
+  ...baselineEntrypoints,
+  localBaselineEntrypoint,
+];
 const overlays = relativeOverlays.map((overlay) =>
   path.join(gitopsRoot, overlay),
 );
@@ -44,8 +51,8 @@ for (const overlay of overlays) {
   renderedByOverlay.set(overlay, parseDocuments(result.stdout, overlay));
 }
 
-const argoOverlays = overlays.slice(0, bootstrapEntrypoints.length);
-for (const overlay of argoOverlays) {
+for (const relativeOverlay of bootstrapEntrypoints) {
+  const overlay = path.join(gitopsRoot, relativeOverlay);
   const identity = bootstrapIdentity(overlay);
   validateRoleInventory(
     renderedByOverlay.get(overlay),
@@ -56,7 +63,20 @@ for (const overlay of argoOverlays) {
   validateArgoBoundary(renderedByOverlay.get(overlay), overlay, identity);
   validateBaselineResources(renderedByOverlay.get(overlay), renderedByOverlay);
 }
-for (const overlay of overlays.slice(bootstrapEntrypoints.length)) {
+const localArgoOverlay = path.join(gitopsRoot, localBootstrapEntrypoint);
+validateLocalArgoBoundary(
+  renderedByOverlay.get(localArgoOverlay),
+  localArgoOverlay,
+);
+validateBaselineResources(
+  renderedByOverlay.get(localArgoOverlay),
+  renderedByOverlay,
+);
+for (const relativeOverlay of [
+  ...baselineEntrypoints,
+  localBaselineEntrypoint,
+]) {
+  const overlay = path.join(gitopsRoot, relativeOverlay);
   validateRestrictedNamespaceEnrollment(
     renderedByOverlay.get(overlay),
     overlay,
@@ -400,6 +420,122 @@ function validateArgoBoundary(documents, label, identity) {
   );
 }
 
+function validateLocalArgoBoundary(documents, label) {
+  const projects = documents.filter(
+    (document) => document.kind === "AppProject",
+  );
+  const applications = documents.filter(
+    (document) => document.kind === "Application",
+  );
+  assertExactSet(
+    new Set(projects.map((project) => project.metadata?.name)),
+    ["default", "local-bootstrap"],
+    label,
+    "local AppProject inventory",
+  );
+  const byName = new Map(
+    projects.map((project) => [project.metadata.name, project]),
+  );
+  const deniedDefault = byName.get("default")?.spec;
+  for (const field of [
+    "sourceRepos",
+    "destinations",
+    "clusterResourceWhitelist",
+    "namespaceResourceWhitelist",
+  ]) {
+    if (!Array.isArray(deniedDefault?.[field]) || deniedDefault[field].length) {
+      fail(
+        label,
+        `local default AppProject ${field} must be an explicit empty list`,
+      );
+    }
+  }
+
+  const project = byName.get("local-bootstrap")?.spec;
+  const repository =
+    "http://codefly-local-git.argocd.svc.cluster.local/gitops.git";
+  if (JSON.stringify(project?.sourceRepos) !== JSON.stringify([repository])) {
+    fail(label, "local-bootstrap must own only the disposable Git repository");
+  }
+  assertExactSet(
+    new Set(
+      (project?.destinations ?? []).map(
+        (destination) => `${destination.server}/${destination.namespace}`,
+      ),
+    ),
+    [
+      "agent-broker",
+      "agent-egress",
+      "execution",
+      "platform",
+      "security",
+      "workloads",
+    ].map((namespace) => `https://kubernetes.default.svc/${namespace}`),
+    label,
+    "local-bootstrap destinations",
+  );
+  assertExactSet(
+    resourceSet(project?.clusterResourceWhitelist),
+    ["/Namespace"],
+    label,
+    "local-bootstrap cluster resources",
+  );
+  assertExactSet(
+    resourceSet(project?.namespaceResourceWhitelist),
+    [
+      "/LimitRange",
+      "/ResourceQuota",
+      "/ServiceAccount",
+      "networking.k8s.io/NetworkPolicy",
+    ],
+    label,
+    "local-bootstrap namespace resources",
+  );
+
+  if (
+    applications.length !== 1 ||
+    applications[0].metadata?.name !== "codefly-local-baseline"
+  ) {
+    fail(label, "must render exactly the codefly-local-baseline Application");
+  }
+  const application = applications[0];
+  if (
+    application.metadata?.namespace !== "argocd" ||
+    application.spec?.project !== "local-bootstrap" ||
+    application.spec?.source?.repoURL !== repository ||
+    application.spec?.source?.targetRevision !== "LOCAL_GIT_REVISION" ||
+    application.spec?.source?.path !== "gitops/overlays/local" ||
+    application.spec?.destination?.server !==
+      "https://kubernetes.default.svc" ||
+    application.spec?.destination?.namespace !== "platform"
+  ) {
+    fail(
+      label,
+      "local baseline must bind the exact project, repository, revision placeholder, path, and destination",
+    );
+  }
+  const automated = application.spec?.syncPolicy?.automated;
+  if (
+    automated?.enabled !== true ||
+    automated?.prune !== true ||
+    automated?.selfHeal !== true ||
+    automated?.allowEmpty !== false
+  ) {
+    fail(label, "local baseline automated reconciliation is incomplete");
+  }
+  assertExactSet(
+    new Set(application.spec?.syncPolicy?.syncOptions ?? []),
+    [
+      "CreateNamespace=false",
+      "FailOnSharedResource=true",
+      "PruneLast=true",
+      "ServerSideApply=true",
+    ],
+    label,
+    "local baseline sync options",
+  );
+}
+
 function bootstrapIdentity(label) {
   const match =
     /bootstrap\/argocd\/overlays\/(dev|staging|production)\/(platform|execution)$/.exec(
@@ -670,16 +806,45 @@ function assertExactSet(actual, expected, label, subject) {
 }
 
 function validateRestrictedNamespaceEnrollment(documents, label) {
+  const local = label.endsWith("overlays/local");
   const match =
     /overlays\/(?:dev|staging|production)\/(platform|execution)$/.exec(label);
-  if (!match) fail(label, "is not an explicit environment/role baseline");
-  const clusterRole = match[1];
-  const expected =
-    clusterRole === "platform"
+  if (!local && !match) {
+    fail(label, "is not an explicit environment/role or local baseline");
+  }
+  const clusterRole = local ? "combined-local" : match[1];
+  const expected = local
+    ? [
+        "agent-broker",
+        "agent-egress",
+        "execution",
+        "platform",
+        "security",
+        "workloads",
+      ]
+    : clusterRole === "platform"
       ? ["agent-broker", "agent-egress", "platform", "security", "workloads"]
       : ["execution", "security"];
-  const expectedNamespaces =
-    clusterRole === "platform"
+  const expectedNamespaces = local
+    ? [
+        "agent-broker",
+        "agent-egress",
+        "argo-rollouts",
+        "cert-manager",
+        "execution",
+        "external-dns",
+        "falco",
+        "istio-ingress",
+        "istio-system",
+        "metrics-server",
+        "observability",
+        "platform",
+        "security",
+        "tailscale",
+        "vault",
+        "workloads",
+      ]
+    : clusterRole === "platform"
       ? [
           "agent-broker",
           "agent-egress",
@@ -768,7 +933,7 @@ function validateBaselineResources(argoDocuments, renderedByOverlay) {
   for (const application of argoDocuments.filter(
     (document) =>
       document.kind === "Application" &&
-      /^gitops\/overlays\/(?:dev|staging|production)\/(?:platform|execution)$/.test(
+      /^gitops\/overlays\/(?:(?:dev|staging|production)\/(?:platform|execution)|local)$/.test(
         document.spec.source.path ?? "",
       ),
   )) {

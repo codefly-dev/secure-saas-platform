@@ -19,6 +19,11 @@ The `clusters/*/kustomization.yaml` files are the cluster entry points.
 
 Environment overlays live under `gitops/overlays/<environment>/<cluster-role>`.
 
+The provider-neutral developer companion lives at `gitops/overlays/local`. It
+is a single combined k3d baseline for fast local work, not a claim that one
+local cluster reproduces the AWS multi-cluster boundary. `gitops/local/README.md`
+documents the exact inclusions, exclusions, safety controls, and lifecycle.
+
 Bootstrap entrypoints live under
 `gitops/bootstrap/argocd/overlays/<environment>/<cluster-role>`. Each
 entrypoint creates exactly one cluster baseline Application for its target:
@@ -32,4 +37,12 @@ local rendering:
 ```sh
 kubectl apply -k gitops/bootstrap/argocd/overlays/staging/platform
 kubectl apply -k gitops/bootstrap/argocd/overlays/staging/execution
+```
+
+For a disposable local cluster reconciled from an exact private Git snapshot:
+
+```sh
+./scripts/local-k3d-up
+./scripts/local-k3d-status
+./scripts/local-k3d-down
 ```

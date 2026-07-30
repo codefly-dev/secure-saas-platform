@@ -128,7 +128,14 @@ test("the landing contract rejects control-plane, credential, ownership, and pro
         writeBundleFile(
           root,
           "credential.yaml",
-          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: leaked\n  namespace: workloads\ndata:\n  AWS_SECRET_ACCESS_KEY: AKIA1234567890123456\n",
+          `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaked
+  namespace: workloads
+data:
+  AWS_SECRET_ACCESS_KEY: ${"AKIA"}${"1234567890123456"}
+`,
         ),
       /credential-bearing key 'AWS_SECRET_ACCESS_KEY'/,
     ],
