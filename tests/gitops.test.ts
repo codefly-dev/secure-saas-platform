@@ -585,6 +585,42 @@ test("all GitOps overlays render", () => {
   );
 });
 
+test("local k3d uses exact Git reconciliation and fail-closed lifecycle controls", () => {
+  const source = readFileSync("scripts/local-k3d-gitops.mjs", "utf8");
+  for (const required of [
+    "127.0.0.1:${apiPort}",
+    '"commit.gpgsign=false"',
+    "ARGOCD_CHART_DIGEST",
+    "codefly.local-gitops.owner",
+    "assertLocalDocker",
+    "sanitizedEnvironment",
+    "LOCAL_GIT_REVISION",
+  ]) {
+    assert.ok(source.includes(required), `missing local guard '${required}'`);
+  }
+  const rendered = spawnSync(
+    process.execPath,
+    ["scripts/local-k3d-gitops.mjs", "render"],
+    { encoding: "utf8" },
+  );
+  assert.equal(rendered.status, 0, rendered.stderr);
+  assert.match(rendered.stdout, /overlays render/);
+
+  for (const args of [
+    ["render", "--cluster", "../unsafe"],
+    ["render", "--cluser", "typo"],
+    ["render", "--cluster", "one", "--cluster", "two"],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/local-k3d-gitops.mjs", ...args],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0, args.join(" "));
+    assert.match(result.stderr, /local-k3d-gitops:/);
+  }
+});
+
 test("Argo AppProjects deny default authority and bind every Application to an exact boundary", () => {
   const rendered = execFileSync(
     "kubectl",
@@ -749,6 +785,34 @@ test("the monitoring stack creates Argo CD ServiceMonitors after installing thei
 
 test("GitOps boundary gate rejects default, wildcard, tenant-cluster, repository, and resource-scope escalation", () => {
   const cases: Array<[string, (root: string) => void, RegExp]> = [
+    [
+      "local repository authority substitution",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/overlays/local/projects.appproject.yaml",
+          ),
+          (documents) => {
+            documents[1].spec.sourceRepos = ["*"];
+          },
+        ),
+      /local-bootstrap must own only the disposable Git repository/,
+    ],
+    [
+      "local mutable revision substitution",
+      (root) =>
+        mutateYaml(
+          path.join(
+            root,
+            "bootstrap/argocd/overlays/local/local-cluster-baseline.application.yaml",
+          ),
+          (documents) => {
+            documents[0].spec.source.targetRevision = "main";
+          },
+        ),
+      /revision placeholder/,
+    ],
     [
       "second role Application",
       (root) =>

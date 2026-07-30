@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  description: Deny-all default project; every local Application selects an owned project.
+  sourceRepos: []
+  destinations: []
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist: []
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: local-bootstrap
+  namespace: argocd
+spec:
+  description: Provider-neutral local baseline served from the disposable exact-snapshot Git remote.
+  sourceRepos:
+    - http://codefly-local-git.argocd.svc.cluster.local/gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: agent-broker
+    - server: https://kubernetes.default.svc
+      namespace: agent-egress
+    - server: https://kubernetes.default.svc
+      namespace: execution
+    - server: https://kubernetes.default.svc
+      namespace: platform
+    - server: https://kubernetes.default.svc
+      namespace: security
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: LimitRange
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: ServiceAccount
+    - group: networking.k8s.io
+      kind: NetworkPolicy

@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codefly-local-baseline
+  namespace: argocd
+spec:
+  project: local-bootstrap
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform
+  source:
+    repoURL: http://codefly-local-git.argocd.svc.cluster.local/gitops.git
+    targetRevision: LOCAL_GIT_REVISION
+    path: gitops/overlays/local
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=false
+      - FailOnSharedResource=true
+      - PruneLast=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m

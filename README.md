@@ -73,3 +73,25 @@ or Kubernetes-object ownership overlap, mutable revisions, cross-path writes,
 and stale inventory/digest mismatches. The live landing tree starts empty;
 non-deployable examples remain under `fixtures/manifest-bundles/`. The same
 contract covers local qualification and production promotion.
+
+## Local k3d GitOps
+
+The production platform/execution split and the developer k3d companion live
+in this repository. Local k3d reconciles the portable baseline through Argo CD
+from an exact disposable Git snapshot; it never direct-applies that baseline
+as the final state.
+
+```sh
+npm run local:doctor
+npm run local:up
+npm run local:status
+npm run local:down
+```
+
+The local API is loopback-only, the Argo chart must match the reviewed
+production digest, subprocesses receive no AWS/Pulumi/cloud credential
+variables, and `down` refuses resources without exact ownership markers. Local
+state and kubeconfig credentials remain mode-restricted under ignored
+`.local/`. This single combined cluster is a developer convenience; AMD64 and
+ARM64 CI still prove exact platform/execution isolation with two disposable
+clusters, and AWS behavior remains an AWS gate.

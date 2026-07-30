@@ -14,6 +14,11 @@
     "qualify:argocd-two-cluster": "node scripts/validate-argocd-cluster-roles.mjs",
     "qualify:disposable-cluster": "node scripts/validate-disposable-cluster.mjs",
     "verify:disposable-cluster": "node scripts/verify-disposable-cluster-report.mjs",
+    "local:doctor": "node scripts/local-k3d-gitops.mjs doctor",
+    "local:render": "node scripts/local-k3d-gitops.mjs render",
+    "local:up": "node scripts/local-k3d-gitops.mjs up",
+    "local:status": "node scripts/local-k3d-gitops.mjs status",
+    "local:down": "node scripts/local-k3d-gitops.mjs down",
     "activate": "node scripts/activate-argocd.mjs",
     "promotion:evidence": "node scripts/record-promotion-evidence.mjs",
     "promotion:verify-source": "node scripts/verify-promotion-source.mjs"
