@@ -537,7 +537,7 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   assert.match(twoCluster, /runOptional\("docker", \["rm", "-f"/);
   assert.equal(
     packageConfig.scripts.check,
-    "npm run format:check && npm run test && npm run validate:gitops && npm run qualify:argocd-chart",
+    "npm run format:check && npm run test && npm run validate:gitops && npm run validate:manifest-bundles && npm run qualify:argocd-chart",
   );
   assert.match(workflow, /npm run check/);
   assert.match(workflow, /npm run qualify:argocd-two-cluster/);

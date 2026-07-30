@@ -1,0 +1,5 @@
+{
+  "apiVersion": "promotion.deus.dev/manifest-bundle-inventory/v1",
+  "kind": "ManifestBundleInventory",
+  "bundles": []
+}

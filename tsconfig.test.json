@@ -15,6 +15,7 @@
     "tests/argocd.test.ts",
     "tests/disposableClusterReportVerifier.test.ts",
     "tests/gitops.test.ts",
+    "tests/manifestBundles.test.ts",
     "tests/promotionEvidence.test.ts"
   ]
 }

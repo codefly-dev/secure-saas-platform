@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://security.deus.dev/schemas/codefly-manifest-bundle-inventory-v1.schema.json",
+  "title": "Codefly promotion driver manifest bundle landing inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "bundles"],
+  "properties": {
+    "apiVersion": {
+      "const": "promotion.deus.dev/manifest-bundle-inventory/v1"
+    },
+    "kind": { "const": "ManifestBundleInventory" },
+    "bundles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/bundle" }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "immutableRevision": {
+      "type": "string",
+      "pattern": "^(?:[a-f0-9]{40}|v\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+)?)$"
+    },
+    "producerIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+$"
+    },
+    "contractVersion": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)*(?:/[a-z0-9-]+)*/v\\d+[a-z0-9]*$"
+    },
+    "identitySegment": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "contractVersion"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/producerIdentity" },
+        "contractVersion": { "$ref": "#/$defs/contractVersion" }
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "module",
+        "service",
+        "path",
+        "producer",
+        "bundleDigest",
+        "sourceRevision"
+      ],
+      "properties": {
+        "environment": {
+          "enum": ["development", "staging", "production"]
+        },
+        "module": { "$ref": "#/$defs/identitySegment" },
+        "service": { "$ref": "#/$defs/identitySegment" },
+        "path": {
+          "type": "string",
+          "pattern": "^gitops/generated/modules/(?:development|staging|production)/[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "producer": { "$ref": "#/$defs/producer" },
+        "bundleDigest": { "$ref": "#/$defs/sha256" },
+        "sourceRevision": { "$ref": "#/$defs/immutableRevision" }
+      }
+    }
+  }
+}
