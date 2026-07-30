@@ -32,6 +32,7 @@ const stateDirectory = path.join(stateRoot, clusterName);
 const ownerMarkerPath = path.join(stateDirectory, "owner.json");
 const kubeconfigPath = path.join(stateDirectory, "kubeconfig.yaml");
 const gitContainerName = `codefly-${clusterName}-git`;
+const expectedRegistryName = `k3d-${clusterName}-registry`;
 const gitRepositoryUrl =
   "http://codefly-local-git.argocd.svc.cluster.local/gitops.git";
 const k3sImage =
@@ -105,9 +106,11 @@ async function up() {
   const source = snapshotGitops();
   const chart = prepareChartAndValues();
   const apiPort = await availablePort();
+  const registry = registryRecord();
+  if (registry) assertReusableRegistry(registry, false);
 
   process.stdout.write(`Creating isolated k3d cluster '${clusterName}'...\n`);
-  run("k3d", [
+  const clusterArguments = [
     "cluster",
     "create",
     clusterName,
@@ -125,6 +128,7 @@ async function up() {
     "--no-lb",
     "--kubeconfig-update-default=false",
     "--kubeconfig-switch-context=false",
+    ...(registry ? ["--registry-use", registry.name] : []),
     "--runtime-label",
     `${ownerLabel}=${ownerValue}@server:*`,
     "--runtime-label",
@@ -135,8 +139,10 @@ async function up() {
     "--disable=servicelb@server:*",
     "--k3s-arg",
     "--disable=metrics-server@server:*",
-  ]);
+  ];
+  run("k3d", clusterArguments);
   assertOwnedCluster(clusterRecord());
+  if (registry) assertReusableRegistry(registryRecord(), true);
   const kubeconfig = capture("k3d", ["kubeconfig", "get", clusterName]);
   if (!/server:\s+https:\/\/127\.0\.0\.1:\d+/.test(kubeconfig)) {
     throw new Error("k3d API endpoint is not bound to loopback");
@@ -265,6 +271,13 @@ async function up() {
       context: contextName,
       apiExposure: "loopback-only",
       k3sImage,
+      registry: registry
+        ? {
+            name: registry.name,
+            hostEndpoint: registryHostEndpoint(registry),
+            lifecycle: "preserved-external-resource",
+          }
+        : null,
     },
     git: {
       repositoryUrl: gitRepositoryUrl,
@@ -306,14 +319,27 @@ function down() {
   const gitContainerPresent = containerExists(gitContainerName);
   const cluster = clusterRecord();
   const statePresent = existsSync(stateDirectory);
+  const registry = registryRecord();
+  const clusterNetwork = `k3d-${clusterName}`;
+  const registryAttached =
+    registry?.Networks?.includes(clusterNetwork) ?? false;
   if (gitContainerPresent) assertOwnedGitContainer();
   if (cluster) assertOwnedCluster(cluster);
   if (statePresent) assertOwnedState();
+  if (registryAttached) assertReusableRegistry(registry, true);
 
   let removed = false;
   if (gitContainerPresent) {
     run("docker", ["rm", "--force", gitContainerName]);
     removed = true;
+  }
+  if (cluster && registryAttached) {
+    run("docker", [
+      "network",
+      "disconnect",
+      clusterNetwork,
+      expectedRegistryName,
+    ]);
   }
   if (cluster) {
     run("k3d", ["cluster", "delete", clusterName]);
@@ -326,7 +352,7 @@ function down() {
   }
   process.stdout.write(
     removed
-      ? `Removed owned local cluster '${clusterName}', Git container, and ignored state.\n`
+      ? `Removed owned local cluster '${clusterName}', Git container, and ignored state; any validated registry was preserved.\n`
       : `No owned local GitOps resources exist for '${clusterName}'.\n`,
   );
 }
@@ -340,6 +366,13 @@ function status() {
   }
   assertOwnedCluster(cluster);
   assertOwnedState();
+  const registry = registryRecord();
+  if (registry) {
+    assertReusableRegistry(registry, true);
+    process.stdout.write(
+      `Registry: ${registry.name} (${registryHostEndpoint(registry)}, preserved)\n`,
+    );
+  }
   runKubectl(["get", "nodes", "--output=wide"]);
   runKubectl([
     "get",
@@ -691,6 +724,53 @@ function clusterRecord() {
   return JSON.parse(result.stdout).find(
     (cluster) => cluster.name === clusterName,
   );
+}
+
+function registryRecord() {
+  const result = spawnSync("k3d", ["registry", "list", "--output", "json"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: childEnvironment,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || "could not list k3d registries");
+  }
+  return JSON.parse(result.stdout).find(
+    (registry) => registry.name === expectedRegistryName,
+  );
+}
+
+function assertReusableRegistry(registry, requireAttached) {
+  const bindings = Object.values(registry?.portMappings ?? {}).flat();
+  if (
+    registry?.name !== expectedRegistryName ||
+    registry?.role !== "registry" ||
+    registry?.runtimeLabels?.["k3d.role"] !== "registry" ||
+    bindings.length === 0 ||
+    bindings.some((binding) => binding.HostIp !== "127.0.0.1") ||
+    (requireAttached && !registry.Networks?.includes(`k3d-${clusterName}`))
+  ) {
+    throw new Error(
+      `refusing registry '${expectedRegistryName}' unless it is an exact loopback-only k3d registry${requireAttached ? " attached to the owned cluster network" : ""}`,
+    );
+  }
+  const role = capture("docker", [
+    "inspect",
+    "--format",
+    '{{index .Config.Labels "k3d.role"}}',
+    registry.name,
+  ]).trim();
+  if (role !== "registry") {
+    throw new Error(
+      `refusing registry '${expectedRegistryName}' without the exact runtime role`,
+    );
+  }
+}
+
+function registryHostEndpoint(registry) {
+  const binding = Object.values(registry.portMappings).flat()[0];
+  return `${binding.HostIp}:${binding.HostPort}`;
 }
 
 function assertOwnedCluster(cluster) {

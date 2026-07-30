@@ -19,6 +19,12 @@ generated local values, and evidence report live in the same ignored
 mode-restricted state directory. Cloud credential environment variables are
 removed from every child process.
 
+If an exact `k3d-<cluster>-registry` already exists, the harness first verifies
+that every published registry port is loopback-only, reconnects it with
+`--registry-use`, records its endpoint in evidence, and deliberately preserves
+it during cluster teardown. This keeps Codefly development registries reusable
+without giving the GitOps lifecycle ownership of their images.
+
 The local overlay shares the provider-neutral namespace, quota, and
 network-policy bases. It is deliberately one combined developer cluster. It
 does not pretend to validate:
