@@ -16,29 +16,26 @@ import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 
 const liveRoot = "gitops/generated/modules";
-const bundleDirectory = path.join(liveRoot, "development/saas-starter/web");
+const fixtureRoot = "fixtures/manifest-bundles/valid";
+const bundleRelative = "development/saas-starter/web";
+const bundleDirectory = path.join(fixtureRoot, bundleRelative);
 
-test("the live landed inventory conforms to the bundle contract schema", () => {
-  const ajv = new Ajv2020({ strict: true, allErrors: true });
-  const validate = ajv.compile(
-    JSON.parse(
-      readFileSync(
-        "schemas/codefly-manifest-bundle-inventory-v1.schema.json",
-        "utf8",
-      ),
-    ),
-  );
-  const inventory = JSON.parse(
-    readFileSync(path.join(liveRoot, "inventory.json"), "utf8"),
-  );
-  assert.equal(validate(inventory), true, JSON.stringify(validate.errors));
-  for (const bundle of inventory.bundles) {
-    assert.equal(bundle.bundleDigest, digestOf(bundle.path));
-  }
+test("the live landing tree is empty and schema-valid before a real promotion", () => {
+  const inventory = validateInventory(liveRoot);
+  assert.deepEqual(inventory.bundles, []);
+  assert.deepEqual(listRelativeFiles(liveRoot).sort(), [
+    "README.md",
+    "inventory.json",
+  ]);
+  const result = validateBundles(liveRoot);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
-test("a validated bundle lands without any reconciliation authority", () => {
-  const result = validateBundles(liveRoot);
+test("a fixture bundle lands without reconciliation authority", () => {
+  const inventory = validateInventory(fixtureRoot);
+  assert.equal(inventory.bundles.length, 1);
+  assert.equal(inventory.bundles[0].bundleDigest, digestOf(bundleDirectory));
+  const result = validateBundles(fixtureRoot);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const manifests = readdirSync(bundleDirectory)
     .map((file) => readFileSync(path.join(bundleDirectory, file), "utf8"))
@@ -47,13 +44,33 @@ test("a validated bundle lands without any reconciliation authority", () => {
   assert.doesNotMatch(manifests, /repoURL|targetRevision|sourceRepos/);
 });
 
-test("the landing contract rejects plugin-owned control-plane and provenance drift", () => {
+test("one inventory supports multiple environments and producers", () => {
+  withFixture((root) => {
+    addBundle(root, {
+      environment: "staging",
+      module: "other-module",
+      service: "api",
+      producer: {
+        identity: "codefly-dev/service-go",
+        contractVersion: "manifest.codefly.dev/service-bundle/v2",
+      },
+      manifest:
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other-api\n  namespace: workloads\n",
+    });
+    const result = validateBundles(root);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /development, staging/);
+  });
+});
+
+test("the landing contract rejects control-plane, credential, ownership, and provenance drift", () => {
   const cases: Array<[string, (root: string) => void, RegExp]> = [
     [
       "plugin-owned Argo Application",
       (root) =>
-        writeFileSync(
-          path.join(root, "development/saas-starter/web/application.yaml"),
+        writeBundleFile(
+          root,
+          "application.yaml",
           [
             "apiVersion: argoproj.io/v1alpha1",
             "kind: Application",
@@ -66,7 +83,17 @@ test("the landing contract rejects plugin-owned control-plane and provenance dri
             "",
           ].join("\n"),
         ),
-      /owns Argo CD Application/,
+      /owns argoproj\.io Application/,
+    ],
+    [
+      "plugin-owned Flux source",
+      (root) =>
+        writeBundleFile(
+          root,
+          "source.yaml",
+          "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata:\n  name: rogue\n",
+        ),
+      /owns source\.toolkit\.fluxcd\.io GitRepository/,
     ],
     [
       "plugin-owned Git source binding",
@@ -80,8 +107,9 @@ test("the landing contract rejects plugin-owned control-plane and provenance dri
     [
       "plugin-owned repository credential Secret",
       (root) =>
-        writeFileSync(
-          path.join(root, "development/saas-starter/web/repo-secret.yaml"),
+        writeBundleFile(
+          root,
+          "repo-secret.yaml",
           [
             "apiVersion: v1",
             "kind: Secret",
@@ -95,6 +123,26 @@ test("the landing contract rejects plugin-owned control-plane and provenance dri
       /owns a Secret/,
     ],
     [
+      "credential-bearing ConfigMap key",
+      (root) =>
+        writeBundleFile(
+          root,
+          "credential.yaml",
+          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: leaked\n  namespace: workloads\ndata:\n  AWS_SECRET_ACCESS_KEY: AKIA1234567890123456\n",
+        ),
+      /credential-bearing key 'AWS_SECRET_ACCESS_KEY'/,
+    ],
+    [
+      "URL credentials hidden in a value",
+      (root) =>
+        writeBundleFile(
+          root,
+          "credential-url.yaml",
+          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: leaked-url\n  namespace: workloads\ndata:\n  DATABASE_URL: https://user:password@example.invalid/database\n",
+        ),
+      /contains URL credentials/,
+    ],
+    [
       "stale inventory after a manifest change",
       (root) =>
         appendToDeployment(root, "  # drift beyond the recorded digest\n"),
@@ -103,11 +151,10 @@ test("the landing contract rejects plugin-owned control-plane and provenance dri
     [
       "cross-path landing that overruns its identity",
       (root) => {
-        const inventoryPath = path.join(root, "inventory.json");
-        const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+        const inventory = readInventory(root);
         inventory.bundles[0].path =
           "gitops/generated/modules/development/saas-starter/api";
-        writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+        writeInventory(root, inventory);
       },
       /does not match its declared environment and module\/service identity/,
     ],
@@ -127,42 +174,112 @@ test("the landing contract rejects plugin-owned control-plane and provenance dri
     [
       "duplicated landing path ownership",
       (root) => {
-        const inventoryPath = path.join(root, "inventory.json");
-        const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+        const inventory = readInventory(root);
         inventory.bundles.push({
           ...inventory.bundles[0],
           sourceRevision: "a".repeat(40),
         });
-        writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+        writeInventory(root, inventory);
       },
       /bundles overlap on landing path/,
     ],
     [
+      "duplicated Kubernetes object ownership",
+      (root) => {
+        addBundle(root, {
+          environment: "development",
+          module: "other-module",
+          service: "api",
+          producer: {
+            identity: "codefly-dev/service-go",
+            contractVersion: "manifest.codefly.dev/service-bundle/v1",
+          },
+          manifest: readFileSync(
+            path.join(root, bundleRelative, "deployment.yaml"),
+            "utf8",
+          ),
+        });
+      },
+      /is owned by both/,
+    ],
+    [
       "mutable source revision",
       (root) => {
-        const inventoryPath = path.join(root, "inventory.json");
-        const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+        const inventory = readInventory(root);
         inventory.bundles[0].sourceRevision = "main";
-        writeFileSync(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+        writeInventory(root, inventory);
       },
       /inventory schema validation failed/,
+    ],
+    [
+      "empty YAML document",
+      (root) => writeBundleFile(root, "empty.yaml", "# no resource\n"),
+      /contains no Kubernetes resources/,
     ],
   ];
 
   for (const [label, mutate, expected] of cases) {
-    const directory = mkdtempSync(path.join(os.tmpdir(), "manifest-bundle-"));
-    const root = path.join(directory, "modules");
-    try {
-      cpSync(liveRoot, root, { recursive: true });
+    withFixture((root) => {
       mutate(root);
       const result = validateBundles(root);
       assert.notEqual(result.status, 0, label);
       assert.match(`${result.stdout}\n${result.stderr}`, expected, label);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+    });
   }
 });
+
+function validateInventory(root: string): any {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  const validate = ajv.compile(
+    JSON.parse(
+      readFileSync(
+        "schemas/codefly-manifest-bundle-inventory-v1.schema.json",
+        "utf8",
+      ),
+    ),
+  );
+  const inventory = readInventory(root);
+  assert.equal(validate(inventory), true, JSON.stringify(validate.errors));
+  return inventory;
+}
+
+function withFixture(action: (root: string) => void): void {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "manifest-bundle-"));
+  const root = path.join(directory, "modules");
+  try {
+    cpSync(fixtureRoot, root, { recursive: true });
+    action(root);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function addBundle(
+  root: string,
+  input: {
+    environment: string;
+    module: string;
+    service: string;
+    producer: { identity: string; contractVersion: string };
+    manifest: string;
+  },
+): void {
+  const relative = `${input.environment}/${input.module}/${input.service}`;
+  const directory = path.join(root, relative);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "manifest.yaml"), input.manifest);
+  const inventory = readInventory(root);
+  inventory.bundles.push({
+    environment: input.environment,
+    module: input.module,
+    service: input.service,
+    path: `gitops/generated/modules/${relative}`,
+    producer: input.producer,
+    bundleDigest: digestOf(directory),
+    sourceRevision: "b".repeat(40),
+  });
+  writeInventory(root, inventory);
+}
 
 function validateBundles(root: string) {
   return spawnSync(
@@ -172,9 +289,24 @@ function validateBundles(root: string) {
   );
 }
 
-function appendToDeployment(root: string, addition: string) {
-  const file = path.join(root, "development/saas-starter/web/deployment.yaml");
+function writeBundleFile(root: string, name: string, contents: string): void {
+  writeFileSync(path.join(root, bundleRelative, name), contents);
+}
+
+function appendToDeployment(root: string, addition: string): void {
+  const file = path.join(root, bundleRelative, "deployment.yaml");
   writeFileSync(file, `${readFileSync(file, "utf8")}${addition}`);
+}
+
+function readInventory(root: string): any {
+  return JSON.parse(readFileSync(path.join(root, "inventory.json"), "utf8"));
+}
+
+function writeInventory(root: string, inventory: any): void {
+  writeFileSync(
+    path.join(root, "inventory.json"),
+    `${JSON.stringify(inventory, null, 2)}\n`,
+  );
 }
 
 function digestOf(directory: string): string {
@@ -186,6 +318,15 @@ function digestOf(directory: string): string {
     })
     .join("\n");
   return sha256(manifest);
+}
+
+function listRelativeFiles(directory: string, prefix = ""): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relative = path.join(prefix, entry.name);
+    return entry.isDirectory()
+      ? listRelativeFiles(path.join(directory, entry.name), relative)
+      : [relative];
+  });
 }
 
 function sha256(value: Buffer | string): string {

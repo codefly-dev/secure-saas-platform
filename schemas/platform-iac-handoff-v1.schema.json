@@ -19,15 +19,29 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
-    "opaqueReference": {
+    "certificateAuthorityReference": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 512,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/?&=%+@-]*$"
+      "pattern": "^sha256:[a-f0-9]{64}$"
     },
-    "awsArn": {
+    "accessEntryReference": {
       "type": "string",
-      "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):[a-z0-9-]+:[a-z0-9-]*:\\d{12}:[A-Za-z0-9+=,.@_:/-]+$"
+      "pattern": "^eks-access://(?:platform|execution)-(?:dev|staging|prod)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "clusterArn": {
+      "type": "string",
+      "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):eks:[a-z0-9-]+:\\d{12}:cluster/(?:platform|execution)-(?:dev|staging|prod)$"
+    },
+    "kmsKeyArn": {
+      "type": "string",
+      "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):kms:[a-z0-9-]+:\\d{12}:key/[A-Za-z0-9-]+$"
+    },
+    "roleArn": {
+      "type": "string",
+      "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):iam::\\d{12}:role/[A-Za-z0-9+=,.@_/-]+$"
+    },
+    "publicKeyReference": {
+      "type": "string",
+      "pattern": "^key-id://sha256/[a-f0-9]{64}$"
     },
     "spec": {
       "type": "object",
@@ -62,20 +76,19 @@
               "pattern": "^https://[^/?#]+(?::\\d+)?$"
             },
             "certificateAuthorityReference": {
-              "$ref": "#/$defs/opaqueReference"
+              "$ref": "#/$defs/certificateAuthorityReference"
             }
           }
         },
         "bootstrapIdentity": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["principalArn", "accessEntryId"],
+          "required": ["principalArn", "accessEntryReference"],
           "properties": {
-            "principalArn": {
-              "type": "string",
-              "pattern": "^arn:(?:aws|aws-us-gov|aws-cn):iam::\\d{12}:role/[A-Za-z0-9+=,.@_/-]+$"
-            },
-            "accessEntryId": { "$ref": "#/$defs/opaqueReference" }
+            "principalArn": { "$ref": "#/$defs/roleArn" },
+            "accessEntryReference": {
+              "$ref": "#/$defs/accessEntryReference"
+            }
           }
         },
         "cloudResources": {
@@ -99,7 +112,7 @@
               "type": "string",
               "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-\\d$"
             },
-            "clusterArn": { "$ref": "#/$defs/awsArn" },
+            "clusterArn": { "$ref": "#/$defs/clusterArn" },
             "vpcId": {
               "type": "string",
               "pattern": "^vpc-[a-f0-9]{8,17}$"
@@ -118,7 +131,7 @@
               "type": "string",
               "pattern": "^sg-[a-f0-9]{8,17}$"
             },
-            "secretsEncryptionKeyArn": { "$ref": "#/$defs/awsArn" }
+            "secretsEncryptionKeyArn": { "$ref": "#/$defs/kmsKeyArn" }
           }
         },
         "gitops": {
@@ -166,7 +179,7 @@
       "properties": {
         "algorithm": { "const": "ecdsa-p256-sha256" },
         "keyId": { "$ref": "#/$defs/sha256" },
-        "publicKeyReference": { "$ref": "#/$defs/opaqueReference" },
+        "publicKeyReference": { "$ref": "#/$defs/publicKeyReference" },
         "value": {
           "type": "string",
           "minLength": 64,

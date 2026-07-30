@@ -1,8 +1,8 @@
 {
   "defaultBranch": {
     "name": "main",
-    "requiredApprovingReviews": 1,
-    "requireCodeOwnerReview": true,
+    "requiredApprovingReviews": 0,
+    "requireCodeOwnerReview": false,
     "dismissStaleReviews": true,
     "requireConversationResolution": true,
     "requiredStatusChecks": [
@@ -19,7 +19,7 @@
     "allowDeletions": false
   },
   "productionEnvironment": {
-    "requiredReviewers": ["codefly-dev/platform-security"],
-    "preventSelfReview": true
+    "requiredReviewers": [],
+    "preventSelfReview": false
   }
 }

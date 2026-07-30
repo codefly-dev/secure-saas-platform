@@ -1,18 +1,5 @@
 {
   "apiVersion": "promotion.deus.dev/manifest-bundle-inventory/v1",
   "kind": "ManifestBundleInventory",
-  "environment": "development",
-  "producer": {
-    "identity": "codefly-dev/module-saas-starter",
-    "contractVersion": "manifest.codefly.dev/module-bundle/v1"
-  },
-  "bundles": [
-    {
-      "module": "saas-starter",
-      "service": "web",
-      "path": "gitops/generated/modules/development/saas-starter/web",
-      "bundleDigest": "516e4a6fe0003d1e6675f03109e79825ed2e209a4486d150a50a0506e1d38cdd",
-      "sourceRevision": "8f2b6c1d4e0a7395b8c2d1e4f6a9083b5c7d1e2f"
-    }
-  ]
+  "bundles": []
 }

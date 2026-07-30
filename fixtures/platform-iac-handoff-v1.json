@@ -1,17 +1,17 @@
 {
   "apiVersion": "infrastructure.deus.dev/platform-iac-handoff/v1",
   "kind": "PlatformIacHandoff",
-  "specDigest": "79345e750430213b2a3169dad747bb7d22f715b3417a44fcd91ff4956520fb5c",
+  "specDigest": "6307bbacf23444549cca40e3985ac5eecd8fd08f7eb4778b4f9bbb6c20c23063",
   "spec": {
     "cluster": {
       "role": "platform",
       "name": "platform-prod",
       "endpoint": "https://0123456789ABCDEF.gr7.us-east-1.eks.amazonaws.com",
-      "certificateAuthorityReference": "pulumi://deus/secure-saas-infra/platform-prod/eksClusters/platform-prod/certificateAuthority"
+      "certificateAuthorityReference": "sha256:828dcd0599c636ae3970d6d0359172338434d46895255af534bc7615aef78962"
     },
     "bootstrapIdentity": {
       "principalArn": "arn:aws:iam::888877776666:role/InfrastructureApplyProd-Workload",
-      "accessEntryId": "eks-access://platform-prod/argocd-bootstrap"
+      "accessEntryReference": "eks-access://platform-prod/argocd-bootstrap"
     },
     "cloudResources": {
       "accountId": "888877776666",
@@ -27,7 +27,7 @@
     },
     "gitops": {
       "repository": "https://github.com/codefly-dev/secure-saas-platform.git",
-      "revision": "v0.1.0",
+      "revision": "v0.1.1",
       "bootstrapEntrypoint": "gitops/bootstrap/argocd/overlays/production/platform"
     },
     "policyDigests": {
@@ -41,8 +41,8 @@
   },
   "signature": {
     "algorithm": "ecdsa-p256-sha256",
-    "keyId": "75f04ce20fba6c8926e353334fcec65a36c92551878bc5303f1d4f0dd93139f0",
-    "publicKeyReference": "keys/qualification-platform-handoff-ecdsa-p256.pub",
-    "value": "MEQCIDmMTxZHsBX0iuYrGYVpI/S1YV5OY32WYPLHzEw4z8TUAiBlp/tXIbOoPVvZZTA2TgMGOuvtEmrn5gqnoY1qe+EuIQ=="
+    "keyId": "36d07e5da7c486ceb7d74ea8be3ef47f5d1ba73144a5ffcefa0daddf19b81703",
+    "publicKeyReference": "key-id://sha256/36d07e5da7c486ceb7d74ea8be3ef47f5d1ba73144a5ffcefa0daddf19b81703",
+    "value": "MEQCIH4ZkwKr2gDx/1lW1IsmOAcujUG7DBKwbr+RUk8PxQjZAiBFs8wKSmMW1mhjZP9eyWtmeRA0P4GPW6XBePWjgkezEg=="
   }
 }

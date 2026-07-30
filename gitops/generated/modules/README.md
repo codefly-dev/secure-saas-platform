@@ -13,11 +13,15 @@ bundle, the exact bundle digest, the producing plugin identity and contract
 version, the environment, the module/service identity, and the reviewed
 immutable source revision that produced it.
 
+The checked-in landing inventory starts empty. Examples live under
+`fixtures/manifest-bundles/`, outside the desired-state tree, so an example or
+placeholder image can never become deployable merely because a future
+Application selects this directory.
+
 The landing tree is plugin-owned desired state only. It must never contain
 reconciliation authority:
 
-- no Argo CD `Application`, `ApplicationSet`, or `AppProject` objects (any
-  `argoproj.io` resource),
+- no Argo CD or Flux reconciliation objects,
 - no repository credentials or `Secret` objects,
 - no `repoURL`, `targetRevision`, `sourceRepos`, or `repositories` bindings.
 
@@ -26,4 +30,5 @@ bundle paths to clusters. Those live under `gitops/bootstrap/argocd`, preserve
 cluster-role separation, and pin immutable revisions. `npm run
 validate:manifest-bundles` enforces the whole contract and runs on every push
 through `npm run check`, so the same rules cover local qualification and
-production promotion.
+production promotion. It also rejects two bundles that claim the same
+Kubernetes object identity.

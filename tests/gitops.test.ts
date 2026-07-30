@@ -114,6 +114,38 @@ test("mesh security defaults enforce mTLS and default-deny authorization", () =>
   assert.match(telemetry, /name: envoy/);
 });
 
+test("agent broker manifests gate the namespace and require audit metadata", () => {
+  const namespace = readFileSync(
+    "gitops/base/namespaces/agent-broker.yaml",
+    "utf8",
+  );
+  const networkPolicy = readFileSync(
+    "gitops/base/network-policies/default-deny-agent-broker.yaml",
+    "utf8",
+  );
+  const allowEgress = readFileSync(
+    "gitops/base/network-policies/allow-broker-to-egress.yaml",
+    "utf8",
+  );
+  const kyverno = readFileSync(
+    "gitops/base/kyverno/require-agent-audit.yaml",
+    "utf8",
+  );
+
+  assert.match(namespace, /pod-security.kubernetes.io\/enforce: restricted/);
+  assert.match(
+    networkPolicy,
+    /policyTypes:\s*\n\s*-\s*Ingress\s*\n\s*-\s*Egress/,
+  );
+  assert.match(allowEgress, /agent-egress/);
+  assert.match(kyverno, /security.deus.dev\/tenant-id/);
+  assert.match(kyverno, /security.deus.dev\/principal-id/);
+  assert.match(kyverno, /security.deus.dev\/turn-id/);
+  assert.match(kyverno, /security.deus.dev\/prompt-audit-sink/);
+  assert.match(kyverno, /security.deus.dev\/tool-audit-sink/);
+  assert.match(kyverno, /deny-broker-direct-model-call/);
+});
+
 test("execution workloads are fail-closed behind sandbox admission controls", () => {
   const runtimeClass = readFileSync(
     "gitops/base/runtime-classes/deus-microvm.yaml",
@@ -513,7 +545,7 @@ test("Argo CD qualification binds the chart artifact and proves two-cluster reco
   assert.equal((workflow.match(/fetch-depth: 0/g) ?? []).length, 2);
 });
 
-test("release ownership protects reviewed source and records production health", () => {
+test("release ownership protects qualified source and records production health", () => {
   const owners = readFileSync(".github/CODEOWNERS", "utf8");
   const governance = JSON.parse(
     readFileSync(".github/repository-governance.json", "utf8"),
@@ -524,7 +556,8 @@ test("release ownership protects reviewed source and records production health",
   );
   const release = readFileSync(".github/workflows/release.yml", "utf8");
   assert.match(owners, /\* @codefly-dev\/platform-security/);
-  assert.equal(governance.defaultBranch.requireCodeOwnerReview, true);
+  assert.equal(governance.defaultBranch.requiredApprovingReviews, 0);
+  assert.equal(governance.defaultBranch.requireCodeOwnerReview, false);
   assert.deepEqual(governance.defaultBranch.requiredStatusChecks, [
     "Platform source qualification",
     "Argo CD exact reconciliation (amd64)",
@@ -532,6 +565,8 @@ test("release ownership protects reviewed source and records production health",
   ]);
   assert.equal(governance.releaseTags.allowUpdates, false);
   assert.equal(governance.releaseTags.allowDeletions, false);
+  assert.deepEqual(governance.productionEnvironment.requiredReviewers, []);
+  assert.equal(governance.productionEnvironment.preventSelfReview, false);
   assert.match(promotion, /environment: production/);
   assert.match(promotion, /promotion:verify-source/);
   assert.match(promotion, /verify-platform-iac-handoff/);

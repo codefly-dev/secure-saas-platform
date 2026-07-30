@@ -23,9 +23,11 @@ automated Application to report the exact source revision, `Synced`, and
 The cloud owner publishes a
 `infrastructure.deus.dev/platform-iac-handoff/v1` document and signs its
 canonical `spec` with the reviewed ECDSA P-256 release key. The document
-contains references and digests only: cluster role, endpoint and CA reference,
-bootstrap identity reference, cloud resource IDs, Git source, policy digests,
-and IaC evidence digests.
+contains references and digests only: cluster role, endpoint and
+content-addressed CA identity, bootstrap access-entry reference, cloud resource
+IDs, Git source, policy digests, and IaC evidence digests. The cloud owner
+materializes it from the `platformIacHandoff` Pulumi stack output with
+`npm run handoff:publish` in `codefly-dev/secure-saas-infra`.
 
 Verify it before cluster access:
 
@@ -36,8 +38,9 @@ node scripts/verify-platform-iac-handoff.mjs \
 ```
 
 `npm run activate -- ... --execute` checks the signed handoff against the
-selected kubeconfig, installs the reviewed Argo CD chart, and applies only the
-role-specific bootstrap Applications. From that point, Git owns reconciliation.
+selected kubeconfig endpoint, CA bytes, and bootstrap role, installs the
+reviewed Argo CD chart, and applies only the role-specific bootstrap
+Applications. From that point, Git owns reconciliation.
 
 Production promotion is restricted to a reviewed signed commit or protected
 immutable `v*` tag. The protected `production` environment runs activation on
@@ -66,6 +69,7 @@ npm run validate:manifest-bundles
 
 Part of `npm run check`, this gate rejects plugin-owned Argo objects,
 repository credentials, `repoURL`/`targetRevision` bindings, landing-path
-ownership overlap, mutable revisions, cross-path writes, and stale
-inventory/digest mismatches. The same contract covers local qualification and
-production promotion.
+or Kubernetes-object ownership overlap, mutable revisions, cross-path writes,
+and stale inventory/digest mismatches. The live landing tree starts empty;
+non-deployable examples remain under `fixtures/manifest-bundles/`. The same
+contract covers local qualification and production promotion.

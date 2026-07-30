@@ -2,22 +2,38 @@
 
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { parseAllDocuments } from "yaml";
 import { sha256 } from "./platform-handoff.mjs";
 
-const forbiddenSourceKeys = [
+const forbiddenSourceKeys = new Set([
   "repoURL",
+  "repositoryURL",
   "targetRevision",
   "sourceRepos",
   "repositories",
-];
+]);
+const forbiddenControlPlaneGroups = new Set([
+  "argoproj.io",
+  "helm.toolkit.fluxcd.io",
+  "kustomize.toolkit.fluxcd.io",
+  "notification.toolkit.fluxcd.io",
+  "source.toolkit.fluxcd.io",
+]);
 const credentialKey =
-  /(?:password|private.?key|client.?secret|access.?token|refresh.?token|credential)$/i;
+  /(?:^|[._-])(?:password|passwd|private[._-]?key|client[._-]?secret|secret[._-]?access[._-]?key|access[._-]?token|refresh[._-]?token|api[._-]?key|credentials?)(?:$|[._-])/i;
+const privateKeyMaterial = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
+const accessKeyMaterial = /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/;
+const commonTokenMaterial =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/;
+const manifestPath = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*\.ya?ml$/;
 
-const schemaPath = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
-  "../schemas/codefly-manifest-bundle-inventory-v1.schema.json",
+const schemaPath = fileURLToPath(
+  new URL(
+    "../schemas/codefly-manifest-bundle-inventory-v1.schema.json",
+    import.meta.url,
+  ),
 );
 
 const modulesRoot = argument("--modules-root") ?? "gitops/generated/modules";
@@ -28,7 +44,7 @@ validateSchema(inventory);
 
 const declared = new Map();
 for (const bundle of inventory.bundles) {
-  const expectedPath = `gitops/generated/modules/${inventory.environment}/${bundle.module}/${bundle.service}`;
+  const expectedPath = `gitops/generated/modules/${bundle.environment}/${bundle.module}/${bundle.service}`;
   if (bundle.path !== expectedPath) {
     fail(
       `bundle ${bundle.module}/${bundle.service} landing path '${bundle.path}' does not match its declared environment and module/service identity.`,
@@ -41,10 +57,11 @@ for (const bundle of inventory.bundles) {
 }
 
 const ownedDirectories = new Map();
+const resourceOwners = new Map();
 for (const bundle of declared.values()) {
   const directory = resolveWithin(
     modulesRoot,
-    `${inventory.environment}/${bundle.module}/${bundle.service}`,
+    `${bundle.environment}/${bundle.module}/${bundle.service}`,
   );
   ownedDirectories.set(directory, bundle);
   const files = listFiles(directory).sort();
@@ -52,7 +69,24 @@ for (const bundle of declared.values()) {
     fail(`bundle '${bundle.path}' landed no manifests.`);
   }
   for (const file of files) {
-    assertPluginOwned(path.join(directory, file), bundle.path);
+    if (!manifestPath.test(file)) {
+      fail(
+        `bundle '${bundle.path}' contains an unsafe manifest path '${file}'.`,
+      );
+    }
+    for (const identity of validateManifest(
+      path.join(directory, file),
+      bundle.path,
+    )) {
+      const scopedIdentity = `${bundle.environment}:${identity}`;
+      const existing = resourceOwners.get(scopedIdentity);
+      if (existing) {
+        fail(
+          `Kubernetes resource '${identity}' in '${bundle.environment}' is owned by both '${existing}' and '${bundle.path}'.`,
+        );
+      }
+      resourceOwners.set(scopedIdentity, bundle.path);
+    }
   }
   const digest = bundleDigest(directory, files);
   if (digest !== bundle.bundleDigest) {
@@ -75,8 +109,13 @@ for (const file of listFiles(modulesRoot)) {
   }
 }
 
+const environments = [
+  ...new Set(inventory.bundles.map((bundle) => bundle.environment)),
+]
+  .sort()
+  .join(", ");
 console.log(
-  `Manifest bundle landing contract satisfied for ${inventory.environment}: ${inventory.bundles.length} inventoried bundle(s).`,
+  `Manifest bundle landing contract satisfied: ${inventory.bundles.length} inventoried bundle(s)${environments ? ` across ${environments}` : ""}.`,
 );
 
 function bundleDigest(directory, files) {
@@ -105,21 +144,33 @@ function validateSchema(document) {
   }
 }
 
-function assertPluginOwned(file, landingPath) {
-  if (!/\.ya?ml$/.test(file)) {
-    fail(`bundle '${landingPath}' contains a non-manifest file '${file}'.`);
-  }
+function validateManifest(file, landingPath) {
   const documents = parseAllDocuments(read(file));
+  const identities = [];
   for (const document of documents) {
     if (document.errors.length > 0) {
       fail(`bundle manifest '${file}' is invalid YAML.`);
     }
     const resource = document.toJSON();
-    if (resource === null || typeof resource !== "object") continue;
-    const group = String(resource.apiVersion ?? "").split("/")[0];
-    if (group === "argoproj.io") {
+    if (resource === null) continue;
+    if (
+      typeof resource !== "object" ||
+      Array.isArray(resource) ||
+      typeof resource.apiVersion !== "string" ||
+      typeof resource.kind !== "string" ||
+      typeof resource.metadata?.name !== "string" ||
+      resource.metadata.name.length === 0
+    ) {
       fail(
-        `bundle '${landingPath}' owns Argo CD ${resource.kind ?? "object"}; reconciliation authority belongs to the platform layer.`,
+        `bundle manifest '${file}' must contain only named Kubernetes resource objects.`,
+      );
+    }
+    const group = resource.apiVersion.includes("/")
+      ? resource.apiVersion.split("/")[0]
+      : "";
+    if (forbiddenControlPlaneGroups.has(group)) {
+      fail(
+        `bundle '${landingPath}' owns ${group} ${resource.kind}; reconciliation authority belongs to the platform layer.`,
       );
     }
     if (resource.kind === "Secret") {
@@ -128,27 +179,67 @@ function assertPluginOwned(file, landingPath) {
       );
     }
     assertNoReconciliationAuthority(resource, file);
+    const namespace =
+      typeof resource.metadata.namespace === "string"
+        ? resource.metadata.namespace
+        : "<cluster>";
+    identities.push(
+      `${resource.apiVersion}/${resource.kind}/${namespace}/${resource.metadata.name}`,
+    );
   }
+  if (identities.length === 0) {
+    fail(`bundle manifest '${file}' contains no Kubernetes resources.`);
+  }
+  return identities;
 }
 
-function assertNoReconciliationAuthority(value, file) {
+function assertNoReconciliationAuthority(
+  value,
+  file,
+  currentPath = "resource",
+) {
   if (Array.isArray(value)) {
-    for (const entry of value) assertNoReconciliationAuthority(entry, file);
+    value.forEach((entry, index) =>
+      assertNoReconciliationAuthority(entry, file, `${currentPath}[${index}]`),
+    );
     return;
   }
-  if (value === null || typeof value !== "object") return;
+  if (value === null || typeof value !== "object") {
+    if (typeof value !== "string") return;
+    if (privateKeyMaterial.test(value)) {
+      fail(`bundle manifest '${file}' contains private key material.`);
+    }
+    if (accessKeyMaterial.test(value) || commonTokenMaterial.test(value)) {
+      fail(
+        `bundle manifest '${file}' contains recognizable access credentials.`,
+      );
+    }
+    if (/^(?:https?|ssh|git\+https):\/\//.test(value)) {
+      let url;
+      try {
+        url = new URL(value);
+      } catch {
+        return;
+      }
+      if (url.username || url.password) {
+        fail(`bundle manifest '${file}' contains URL credentials.`);
+      }
+    }
+    return;
+  }
   for (const [key, entry] of Object.entries(value)) {
-    if (forbiddenSourceKeys.includes(key)) {
+    if (forbiddenSourceKeys.has(key)) {
       fail(
         `bundle manifest '${file}' declares Git source binding '${key}'; only the platform layer controls Git sources.`,
       );
     }
-    if (credentialKey.test(key)) {
+    const normalizedKey = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
+    if (credentialKey.test(normalizedKey)) {
       fail(
-        `bundle manifest '${file}' contains credential-bearing key '${key}'.`,
+        `bundle manifest '${file}' contains credential-bearing key '${key}' at '${currentPath}'.`,
       );
     }
-    assertNoReconciliationAuthority(entry, file);
+    assertNoReconciliationAuthority(entry, file, `${currentPath}.${key}`);
   }
 }
 
@@ -164,7 +255,7 @@ function listFiles(directory, prefix = "") {
     if (entry.isDirectory()) {
       entries.push(...listFiles(path.join(directory, entry.name), relative));
     } else if (entry.isFile()) {
-      entries.push(relative);
+      entries.push(relative.split(path.sep).join("/"));
     }
   }
   return entries;

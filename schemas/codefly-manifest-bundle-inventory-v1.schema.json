@@ -4,22 +4,12 @@
   "title": "Codefly promotion driver manifest bundle landing inventory",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "environment", "producer", "bundles"],
+  "required": ["apiVersion", "kind", "bundles"],
   "properties": {
     "apiVersion": {
       "const": "promotion.deus.dev/manifest-bundle-inventory/v1"
     },
     "kind": { "const": "ManifestBundleInventory" },
-    "environment": { "enum": ["development", "staging", "production"] },
-    "producer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["identity", "contractVersion"],
-      "properties": {
-        "identity": { "$ref": "#/$defs/producerIdentity" },
-        "contractVersion": { "$ref": "#/$defs/contractVersion" }
-      }
-    },
     "bundles": {
       "type": "array",
       "uniqueItems": true,
@@ -49,23 +39,38 @@
       "type": "string",
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "contractVersion"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/producerIdentity" },
+        "contractVersion": { "$ref": "#/$defs/contractVersion" }
+      }
+    },
     "bundle": {
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "environment",
         "module",
         "service",
         "path",
+        "producer",
         "bundleDigest",
         "sourceRevision"
       ],
       "properties": {
+        "environment": {
+          "enum": ["development", "staging", "production"]
+        },
         "module": { "$ref": "#/$defs/identitySegment" },
         "service": { "$ref": "#/$defs/identitySegment" },
         "path": {
           "type": "string",
           "pattern": "^gitops/generated/modules/(?:development|staging|production)/[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*$"
         },
+        "producer": { "$ref": "#/$defs/producer" },
         "bundleDigest": { "$ref": "#/$defs/sha256" },
         "sourceRevision": { "$ref": "#/$defs/immutableRevision" }
       }
