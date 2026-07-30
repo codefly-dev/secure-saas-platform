@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseAllDocuments, stringify } from "yaml";
 import { loadArgocdValues } from "./load-argocd-values.mjs";
-import { sha256, verifyPlatformHandoff } from "./platform-handoff.mjs";
+import {
+  assertKubeconfigBinding,
+  sha256,
+  verifyPlatformHandoff,
+} from "./platform-handoff.mjs";
 
 const args = parseArguments(process.argv.slice(2));
 const handoff = verifyPlatformHandoff(args.handoff, args.publicKey);
@@ -214,21 +218,7 @@ function assertKubeconfig(specification, kubeconfig) {
       "json",
     ]).stdout,
   );
-  if (
-    config.clusters?.[0]?.cluster?.server !== specification.cluster.endpoint
-  ) {
-    throw new Error("Kubeconfig endpoint does not match the signed handoff.");
-  }
-  const execArgs = config.users?.[0]?.user?.exec?.args ?? [];
-  const roleIndex = execArgs.indexOf("--role-arn");
-  if (
-    roleIndex < 0 ||
-    execArgs[roleIndex + 1] !== specification.bootstrapIdentity.principalArn
-  ) {
-    throw new Error(
-      "Kubeconfig bootstrap identity does not match the signed handoff.",
-    );
-  }
+  assertKubeconfigBinding(specification, config);
 }
 
 function run(command, commandArguments, input) {
