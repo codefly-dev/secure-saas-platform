@@ -277,6 +277,7 @@ test("Argo CD includes common platform operators", () => {
 
 test("Argo CD bootstrap entrypoints render one immutable cluster role", () => {
   const common = [
+    "external-secrets",
     "falco",
     "istio-base",
     "istio-cni",
@@ -357,6 +358,7 @@ test("cluster baselines own only namespaces and bootstrap authority assigned to 
         "argo-rollouts",
         "cert-manager",
         "external-dns",
+        "external-secrets",
         "falco",
         "istio-ingress",
         "istio-system",
@@ -383,6 +385,7 @@ test("cluster baselines own only namespaces and bootstrap authority assigned to 
     execution: {
       namespaces: [
         "execution",
+        "external-secrets",
         "falco",
         "istio-system",
         "metrics-server",

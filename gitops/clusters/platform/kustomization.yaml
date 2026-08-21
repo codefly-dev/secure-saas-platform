@@ -6,5 +6,6 @@ resources:
   - ../../base/roles/platform/network-policies
   - ../../base/roles/platform/kyverno
   - ../../base/vault
+  - ../../base/external-secrets
   - ../../base/roles/platform/istio-security
   - tailscale-platform-access.yaml

@@ -221,10 +221,13 @@ metadata:
 spec:
   description: Security controllers isolated from general platform operators.
   sourceRepos:
+    - https://charts.external-secrets.io
     - https://falcosecurity.github.io/charts
     - https://helm.releases.hashicorp.com
     - https://kyverno.github.io/kyverno/
   destinations:
+    - server: https://kubernetes.default.svc
+      namespace: external-secrets
     - server: https://kubernetes.default.svc
       namespace: falco
     - server: https://kubernetes.default.svc
@@ -281,6 +284,8 @@ spec:
       groups:
         - deus:infra:security
       policies:
+        - p, proj:security:security-sync, applications, get, security/external-secrets, allow
+        - p, proj:security:security-sync, applications, sync, security/external-secrets, allow
         - p, proj:security:security-sync, applications, get, security/falco, allow
         - p, proj:security:security-sync, applications, sync, security/falco, allow
         - p, proj:security:security-sync, applications, get, security/kyverno, allow

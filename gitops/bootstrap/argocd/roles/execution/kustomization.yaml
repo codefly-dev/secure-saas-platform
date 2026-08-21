@@ -117,11 +117,14 @@ patches:
       - op: replace
         path: /spec/sourceRepos
         value:
+          - https://charts.external-secrets.io
           - https://falcosecurity.github.io/charts
           - https://kyverno.github.io/kyverno/
       - op: replace
         path: /spec/destinations
         value:
+          - server: https://kubernetes.default.svc
+            namespace: external-secrets
           - server: https://kubernetes.default.svc
             namespace: falco
           - server: https://kubernetes.default.svc
@@ -132,6 +135,8 @@ patches:
       - op: replace
         path: /spec/roles/0/policies
         value:
+          - p, proj:security:security-sync, applications, get, security/external-secrets, allow
+          - p, proj:security:security-sync, applications, sync, security/external-secrets, allow
           - p, proj:security:security-sync, applications, get, security/falco, allow
           - p, proj:security:security-sync, applications, sync, security/falco, allow
           - p, proj:security:security-sync, applications, get, security/kyverno, allow
