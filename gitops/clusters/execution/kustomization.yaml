@@ -8,5 +8,6 @@ resources:
   - ../../base/roles/execution/network-policies
   - ../../base/roles/execution/kyverno
   - ../../base/roles/execution/istio-security
+  - ../../base/external-secrets
 patches:
   - path: patches/execution-namespace-labels.yaml

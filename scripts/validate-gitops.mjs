@@ -561,6 +561,7 @@ function validateRoleInventory(documents, label, identity, renderedByOverlay) {
   }
   validateArgoOwnership(applications, label, renderedByOverlay);
   const common = [
+    "external-secrets",
     "falco",
     "istio-base",
     "istio-cni",
@@ -851,6 +852,7 @@ function validateRestrictedNamespaceEnrollment(documents, label) {
           "argo-rollouts",
           "cert-manager",
           "external-dns",
+          "external-secrets",
           "falco",
           "istio-ingress",
           "istio-system",
@@ -865,6 +867,7 @@ function validateRestrictedNamespaceEnrollment(documents, label) {
         ]
       : [
           "execution",
+          "external-secrets",
           "falco",
           "istio-system",
           "metrics-server",
